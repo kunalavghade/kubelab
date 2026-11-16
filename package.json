@@ -1,0 +1,8 @@
+{
+  "name": "kubelab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test assets/js/sim/engine.test.js"
+  }
+}
