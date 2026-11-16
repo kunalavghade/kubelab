@@ -1,5 +1,74 @@
 // Beginner lessons: what Kubernetes is, how a cluster works and the first objects you meet.
 export const BEGINNER = [
+  // ---------------------------------------------------------------- 0
+  {
+    id: 'containers-primer',
+    level: 'beginner',
+    title: 'Containers & images in 5 minutes',
+    summary: 'Never used Docker? The two ideas Kubernetes is built on: images and containers.',
+    minutes: 7,
+    plain: `An app needs more than its own code to run: the right language version, some libraries and a few settings. A <b>container image</b> packs all of that into one bundle you can copy to any computer. A <b>container</b> is that image running — an ordinary program that is fenced off so it cannot see or disturb the other programs on the machine. Kubernetes runs containers, so knowing exactly what they are makes every later lesson easier.`,
+    learn: ['What an image is, and what layers, tags and registries are', 'What a container is — and what it is not', 'How one image becomes many containers', 'Why containers alone are not enough once you have many machines'],
+    blocks: [
+      ['p', `You write an app on your laptop and it works. You copy it to a server and it crashes: a different Python version, a missing library, a setting nobody remembered. Every developer knows this as <b>“it works on my machine”</b>.`],
+      ['p', `Containers fix this by shipping the app <b>together with everything it needs</b>. If it runs in a container on your laptop, it runs the same way on a server, in the cloud, or inside Kubernetes.`],
+      ['analogy', `Think of a ready meal. The <b>image</b> is the recipe and the sealed box of ingredients — it never changes, and you can make as many copies as you like. A <b>container</b> is one meal actually being cooked and eaten. From one box design you can serve ten meals at the same time, and each plate is separate: spilling sauce on one does not touch the others.`],
+      ['h', 'Images: the packed bundle'],
+      ['p', `An <b>image</b> is a read-only template: a small file system (the app, its language runtime, its libraries) plus a note saying which program to start. You do not change an image; you build a new one.`],
+      ['p', `Images are made of <b>layers</b> stacked on top of each other — for example “Debian base”, then “nginx installed”, then “my website files”. Two images that share a base layer store it only once, which keeps downloads small and fast.`],
+      ['table', {
+        head: ['Word', 'In plain words', 'Example'],
+        rows: [
+          ['<b>Image</b>', 'A packed, read-only template of an app and everything it needs', '<code>nginx</code>'],
+          ['<b>Layer</b>', 'One slice of an image; images share common layers', '“Debian base”'],
+          ['<b>Tag</b>', 'A version label on an image. Leaving it out means <code>latest</code>', '<code>nginx:1.27</code>'],
+          ['<b>Registry</b>', 'An online store of images you pull from and push to', 'Docker Hub, GitHub Container Registry'],
+          ['<b>Container</b>', 'An image that is running: a fenced-off program', '<code>web</code> serving pages on port 80'],
+        ],
+      }],
+      ['h', 'Containers: a program in a fenced yard'],
+      ['p', `A container is not a small virtual machine. It is a <b>normal process</b> (a running program) on the machine, with two Linux features around it:`],
+      ['list', [
+        `<b>Namespaces</b> — give the process its own private view: its own file system, its own network address, its own list of processes. It thinks it is alone on the machine.`,
+        `<b>cgroups</b> (control groups) — put limits on how much CPU and memory it may use, so one greedy container cannot starve the rest.`,
+      ]],
+      ['p', `Because a container is just a fenced process, it starts in a fraction of a second and uses very little extra memory. That is why you can run dozens on one machine — and why Kubernetes can move them around so freely.`],
+      ['anim', 'primerImageToContainers'],
+      ['cmd', { title: 'Run a container with Docker', parts: [
+        ['docker', 'The Docker command-line tool. It asks the Docker engine on your machine to do the work.'],
+        ['run', 'Create a container from an image and start it. If the image is not on this machine yet, Docker pulls it from the registry first.'],
+        ['-d', '“Detached”: run it in the background and give you your prompt back.'],
+        ['--name web', 'A friendly name for this container, so you can say <code>docker logs web</code>.'],
+        ['-p 8080:80', 'Publish a port: requests to port 8080 on your machine go to port 80 inside the container.'],
+        ['nginx:1.27', 'The image and its tag (version). Always pin a version in real work.'],
+      ], note: 'Open http://localhost:8080 and you would see the nginx welcome page. You do not need Docker for this course — every lab here is simulated.' }],
+      ['h', 'Why containers alone are not enough'],
+      ['p', `One machine with a few containers is easy to manage by hand. Now picture 40 apps, each needing 3 copies, spread over 20 machines:`],
+      ['list', [
+        `Which machine has room for the next container?`,
+        `Who restarts a container that crashes at night, or moves everything off a machine that just died?`,
+        `How do containers find each other when they keep getting new addresses?`,
+        `How do you update all 120 copies to a new version without downtime?`,
+      ]],
+      ['p', `Answering these questions for a whole group of machines is called <b>orchestration</b>, and it is exactly what Kubernetes does. The next lesson starts there.`],
+      ['tip', `Want the full picture of images, layers, Dockerfiles, volumes and networks? <a href="https://kunalavghade.github.io/dockerlab/" target="_blank" rel="noopener">Docker Lab</a> is the companion course, built the same way as this one.`],
+      ['h', 'Common mistakes'],
+      ['list', [
+        `Thinking a container is a tiny virtual machine. It is a process sharing the machine’s kernel (the core of the operating system), which is why it starts so fast.`,
+        `Using images without a tag (<code>nginx</code> = <code>nginx:latest</code>). “latest” changes over time, so two machines can end up running different versions. Pin a tag like <code>nginx:1.27</code>.`,
+        `Saving important data inside the container’s own file system. When the container is replaced, those files are gone. Real data belongs in a volume (lesson “Storage”).`,
+        `Expecting Docker to restart or move containers across machines on its own. On one machine it can restart them; across many machines you need an orchestrator.`,
+      ]],
+    ],
+    quiz: [
+      { q: 'What is a container image?', options: ['A running program', 'A packed, read-only template of an app and everything it needs', 'A virtual machine', 'A network address'], answer: 1, why: 'The image is the template; a container is that template running.' },
+      { q: 'What is a container, really?', options: ['A small virtual machine with its own kernel', 'A normal process fenced off with namespaces and limited with cgroups', 'A file on a registry', 'A Kubernetes object'], answer: 1, why: 'Containers share the host kernel; namespaces isolate them and cgroups limit them.' },
+      { q: 'What does the tag in nginx:1.27 mean?', options: ['The port', 'The version of the image', 'The container name', 'The registry'], answer: 1, why: 'A tag labels one version of an image. No tag means latest.' },
+      { q: 'How many containers can you start from one image?', options: ['Exactly one', 'As many as the machine has room for', 'Two', 'One per registry'], answer: 1, why: 'An image is a read-only template; every container gets its own thin writable layer on top.' },
+      { q: 'Which problem do containers alone NOT solve?', options: ['“It works on my machine”', 'Packing libraries with the app', 'Restarting and placing hundreds of containers across many machines', 'Starting quickly'], answer: 2, why: 'Managing containers across many machines is orchestration — the job of Kubernetes.' },
+    ],
+  },
+
   // ---------------------------------------------------------------- 1
   {
     id: 'why-kubernetes',
@@ -7,6 +76,7 @@ export const BEGINNER = [
     title: 'Why Kubernetes?',
     summary: 'From one container to hundreds: the problems Kubernetes solves and the idea of desired state.',
     minutes: 8,
+    plain: `Running one container is easy. Running hundreds of them across many machines, day and night, is not: something has to decide where each one goes, restart the ones that crash and update them without downtime. <b>Kubernetes</b> is that something. You tell it what you want (“3 copies of my shop, version 2”) and it keeps making that true on its own, forever. That is why almost every company that runs containers at scale uses it.`,
     learn: ['Why running many containers by hand breaks down', 'Desired state vs step-by-step scripts', 'What Kubernetes is — and what it is not', 'The words you will meet in every lesson'],
     blocks: [
       ['p', `Running <b>one</b> container is easy: <code>docker run</code> and you are done. Now imagine a real shop: 40 services, 3 copies of each for safety, spread over 20 servers, updated several times a day. Suddenly you have to answer questions that <code>docker run</code> never asked.`],
@@ -22,7 +92,7 @@ export const BEGINNER = [
       ['analogy', `“Kubernetes” is Greek for <b>helmsman</b> — the person who steers a ship. If Docker gave software a standard shipping container, Kubernetes is the harbour master and the helmsman together: it decides which ship (server) carries which container, notices when one sinks and re-loads the cargo onto another, all on its own.`],
       ['h', 'Scripts vs desired state'],
       ['p', `The old way is <b>imperative</b>: you write the steps. “ssh into server 2, start 3 copies of web.” The script runs once. If a copy crashes an hour later, nobody notices — the script has already finished.`],
-      ['p', `Kubernetes is <b>declarative</b>: you write down the result you want — <b>desired state</b> — such as “3 copies of web, version 1.4, each with 256 MiB of memory”. Kubernetes stores it and then runs <b>control loops</b> that compare the desired state with the <b>actual state</b> of the cluster, forever, and fix any difference.`],
+      ['p', `Kubernetes is <b>declarative</b>: you write down the result you want — <b>desired state</b> — such as “3 copies of web, version 1.4, each with 256 MiB of memory”. Kubernetes stores it and then runs <b>control loops</b> — small programs that check again and again — that compare the desired state with the <b>actual state</b> of the cluster, forever, and fix any difference.`],
       ['anim', 'whyK8sReconcile'],
       ['compare', {
         a: { title: 'Imperative scripts', items: ['You describe the steps', 'Runs once, then forgets', 'Crashes and dead servers need a human', 'Hard to know what is really running', 'Each team builds its own tooling'] },
@@ -58,6 +128,13 @@ export const BEGINNER = [
         ],
       }],
       ['p', `In the next lesson you will open the cluster up and see which component does which job.`],
+      ['h', 'Common mistakes'],
+      ['list', [
+        `Thinking Kubernetes builds or fixes your app. It runs images you built elsewhere; a buggy app just crashes in a more organised way.`,
+        `Using Kubernetes for one tiny app on one server. It adds moving parts; Docker Compose or a single VM is often enough.`,
+        `Treating Kubernetes like a script runner (“start this now”). It works best when you describe the end result and let it reach that result on its own.`,
+        `Expecting Kubernetes to include monitoring, logging, CI/CD and databases. It gives you the platform; you add those pieces.`,
+      ]],
     ],
     quiz: [
       { q: 'What does “declarative” mean in Kubernetes?', options: ['You write the exact steps to run', 'You describe the result you want and Kubernetes keeps making it true', 'You click buttons in a web UI', 'Every command must be typed twice'], answer: 1, why: 'You store the desired state; control loops keep comparing it with reality and fix differences.' },
@@ -74,6 +151,7 @@ export const BEGINNER = [
     title: 'How a cluster works',
     summary: 'The control plane, the worker nodes and how one command flows through every component.',
     minutes: 10,
+    plain: `A Kubernetes cluster is a team of computers. A few of them form the <b>control plane</b> — the office that takes your requests, writes them down and makes decisions. The rest are <b>worker nodes</b> — the machines that actually run your apps. Nobody shouts orders: everything is written on one shared board (the API server), and each part keeps watching that board for work meant for it. Knowing who does what tells you where to look when something goes wrong.`,
     learn: ['What each control-plane component does', 'What runs on every worker node', 'Why everything talks only to the API server', 'How a Deployment becomes running containers, step by step'],
     blocks: [
       ['p', `A Kubernetes cluster has two kinds of machines. The <b>control plane</b> makes decisions and stores the state of the cluster. The <b>worker nodes</b> run your containers. In small or managed clusters you may never see the control plane, but it is always there.`],
@@ -90,12 +168,12 @@ export const BEGINNER = [
         ],
       }],
       ['h3', 'The API server is the hub'],
-      ['p', `No component calls another directly. The scheduler does not tell the kubelet to start a pod; it writes a <b>binding</b> to the API server. The kubelet is <b>watching</b> the API server and sees that a pod now belongs to its node. This hub-and-spoke design means any component can restart and simply catch up by reading the current state.`],
+      ['p', `No component calls another directly. The scheduler does not tell the kubelet to start a pod; it writes a <b>binding</b> (a note saying “this pod goes to that node”) to the API server. The kubelet is <b>watching</b> the API server (keeping a connection open so it hears about every change at once) and sees that a pod now belongs to its node. This hub-and-spoke design means any component can restart and simply catch up by reading the current state.`],
       ['analogy', `Picture a harbour office with one big board. Nobody shouts orders across the quay. The harbour master pins up “ship 3 → berth 2”; the crew at berth 2 keeps looking at the board and starts unloading when their name appears.`],
       ['h', 'Worker nodes'],
       ['list', [
         `<b>kubelet</b> — the node agent. It watches for pods assigned to its node, asks the container runtime to start them, runs their health checks (probes) and reports their status back to the API server.`,
-        `<b>Container runtime</b> — the program that actually runs containers, such as <b>containerd</b> or <b>CRI-O</b>. The kubelet talks to it through the <b>Container Runtime Interface (CRI)</b>. Images built with Docker run fine — they are standard OCI images.`,
+        `<b>Container runtime</b> — the program that actually runs containers, such as <b>containerd</b> or <b>CRI-O</b>. The kubelet talks to it through the <b>Container Runtime Interface (CRI)</b>. Images built with Docker run fine — they follow the open <b>OCI</b> (Open Container Initiative) image standard that every runtime understands.`,
         `<b>kube-proxy</b> — programs the node's networking rules (iptables, IPVS or nftables) so traffic sent to a <b>Service</b> reaches one of its pods. Some network plugins, such as Cilium, replace it.`,
       ]],
       ['h', 'Add-ons every cluster needs'],
@@ -108,7 +186,7 @@ export const BEGINNER = [
         ['kubectl', 'The Kubernetes command-line tool.'],
         ['get', 'List objects.'],
         ['pods', 'The kind of object to list.'],
-        ['-n kube-system', 'Look in the <b>kube-system</b> namespace, where Kubernetes keeps its own components (CoreDNS, kube-proxy and, on kubeadm or kind clusters, the control plane itself running as static pods).'],
+        ['-n kube-system', 'Look in the <b>kube-system</b> namespace, where Kubernetes keeps its own components (CoreDNS, kube-proxy and, on kubeadm or kind clusters, the control plane itself running as <b>static pods</b> — pods the kubelet starts from files on the node, before the API server even exists).'],
       ], note: 'On a managed cluster (EKS, GKE, AKS) you will not see the API server or etcd here — the provider runs them for you.', try: true }],
       ['cmd', { title: 'Ask the API server how healthy it is', parts: [
         ['kubectl', 'The Kubernetes command-line tool.'],
@@ -128,6 +206,13 @@ export const BEGINNER = [
       ]],
       ['warn', `etcd holds <b>everything</b>. If it is lost and you have no backup, your cluster's state is gone. Self-managed clusters must back etcd up regularly; managed clusters do this for you.`],
       ['tip', `Production control planes run <b>3 or 5</b> etcd members (an odd number, so a majority can always agree) and several API server copies behind a load balancer.`],
+      ['h', 'Common mistakes'],
+      ['list', [
+        `Thinking kubectl talks to the nodes. It only ever talks to the API server; the nodes pick up the work from there.`,
+        `Mixing up <b>kubelet</b> (starts and checks containers on its node) and <b>kube-proxy</b> (routes Service traffic on its node).`,
+        `Running a self-managed cluster without etcd backups. Lose etcd and you lose every object in the cluster.`,
+        `Looking for the API server pod on a managed cluster (EKS, GKE, AKS). The provider runs the control plane; you only see your worker nodes.`,
+      ]],
     ],
     quiz: [
       { q: 'Which component is the only one that reads and writes etcd?', options: ['The scheduler', 'The kubelet', 'The API server', 'kube-proxy'], answer: 2, why: 'Everything else goes through the API server, which is the only client of etcd.' },
@@ -145,9 +230,19 @@ export const BEGINNER = [
     title: 'kubectl & your first cluster',
     summary: 'Start a cluster on your laptop, understand kubeconfig and contexts, and learn to look around with kubectl.',
     minutes: 12,
+    plain: `<b>kubectl</b> is the remote control for a cluster. You type a command, it turns it into a web request, sends it to the cluster’s API server and prints the answer as a neat table. A small file on your computer, the <b>kubeconfig</b>, tells kubectl which clusters exist, who you are and which cluster you are pointing at right now. Learn to look around safely first — most of your time with Kubernetes is spent reading, not changing.`,
     learn: ['Ways to run a cluster on your laptop', 'What kubeconfig, clusters, users and contexts are', 'get, describe, explain and api-resources', 'Output formats and short names'],
     blocks: [
       ['p', `<b>kubectl</b> (say “kube-control” or “kube-cuttle”) is how you talk to a cluster. Every command becomes an <b>HTTPS request</b> to the API server: <code>kubectl get pods</code> is a <code>GET /api/v1/namespaces/default/pods</code>. kubectl turns the JSON reply into the table you see.`],
+      ['analogy', `kubectl is a TV remote and your kubeconfig is the list of TVs it is paired with. A <b>context</b> is “the TV I am pointing at right now”. Pressing a button always works on the current TV — which is great, until you think you are pointing at the test TV and you are actually pointing at production.`],
+      ['h3', 'What happens when you press Enter'],
+      ['list', [
+        `kubectl reads your <b>kubeconfig</b> to find the current cluster’s address and your credentials (a certificate or a token — your ID card).`,
+        `It turns <code>get pods</code> into an HTTPS request: <code>GET /api/v1/namespaces/default/pods</code>.`,
+        `The API server checks who you are (<b>authentication</b>), whether you may do this (<b>authorization</b>), then reads the pods from its database.`,
+        `It answers with JSON (a text format for data). kubectl picks the useful columns and prints a table.`,
+      ]],
+      ['p', `Because everything is a web request, the same cluster can be driven by kubectl, a web dashboard, a CI pipeline or your own program — they all speak to the same API.`],
       ['h', 'A cluster on your laptop'],
       ['table', {
         head: ['Tool', 'How it runs nodes', 'Good for'],
@@ -202,6 +297,7 @@ export const BEGINNER = [
       ['anim', 'kubectlRest'],
       ['warn', `The most expensive mistake in Kubernetes is running a command against the wrong cluster. Check with <code>kubectl config current-context</code> before deleting anything, and consider a shell prompt that shows the current context.`],
       ['h', 'Look around'],
+      ['p', `Before you change anything, learn to <b>read</b> the cluster. Three verbs cover almost everything: <code>get</code> lists things briefly, <code>describe</code> explains one thing in detail, and <code>logs</code> shows what an app printed. None of them change anything, so they are always safe to run.`],
       ['cmd', { title: 'Where is my cluster?', parts: [
         ['kubectl', 'The Kubernetes command-line tool.'],
         ['cluster-info', 'Shows the API server URL and the address of CoreDNS. A quick “am I connected?” check.'],
@@ -222,6 +318,17 @@ export const BEGINNER = [
         ['deployment.spec.strategy', 'A dotted path into the object. Add <code>--recursive</code> to see every nested field.'],
       ], try: true }],
       ['p', `<code>kubectl get</code> gives a short list; <code>kubectl describe</code> gives a long human-readable report, including recent <b>Events</b> — the first place to look when something is wrong.`],
+      ['h3', 'Reading kubectl get pods'],
+      ['table', {
+        head: ['Column', 'What it tells you', 'Example'],
+        rows: [
+          ['NAME', 'The pod’s name. Pods made by a Deployment get random endings', '<code>web-7d4b9c-x2kq</code>'],
+          ['READY', 'Containers ready / containers in the pod', '<code>1/1</code> is healthy, <code>0/1</code> is not ready yet'],
+          ['STATUS', 'The most useful state right now', '<code>Running</code>, <code>Pending</code>, <code>CrashLoopBackOff</code>'],
+          ['RESTARTS', 'How often a container restarted (and how long ago)', '<code>3 (40s ago)</code> means something keeps crashing'],
+          ['AGE', 'How long the pod has existed', '<code>5m</code>'],
+        ],
+      }],
       ['h', 'Output formats'],
       ['table', {
         head: ['Flag', 'You get', 'Use it for'],
@@ -249,6 +356,14 @@ export const BEGINNER = [
         ],
       }],
       ['tip', `Two habits that save hours: <code>alias k=kubectl</code>, and shell completion with <code>source &lt;(kubectl completion bash)</code> (or <code>zsh</code>). Then Tab completes resource names, even pod names.`],
+      ['h', 'Common mistakes'],
+      ['list', [
+        `Running a command against the wrong cluster. Check <code>kubectl config current-context</code> before anything destructive.`,
+        `Forgetting the namespace. “No resources found in default namespace” often just means your objects are elsewhere — add <code>-n NAME</code> or <code>-A</code>.`,
+        `Thinking <code>kubectl config …</code> changes the cluster. It only edits the kubeconfig file on your laptop.`,
+        `Using a kubectl far older or newer than the cluster. kubectl supports one minor version either side of the API server (for example 1.33–1.35 for a 1.34 cluster).`,
+        `Sharing or committing your kubeconfig. It contains your credentials — treat it like a password.`,
+      ]],
     ],
     quiz: [
       { q: 'What is a context in kubeconfig?', options: ['A namespace', 'A cluster + user (+ optional namespace) under one name', 'A running pod', 'A YAML file'], answer: 1, why: 'Contexts pair a cluster with credentials, and can set a default namespace.' },
@@ -266,6 +381,7 @@ export const BEGINNER = [
     title: 'Pods',
     summary: 'The smallest thing Kubernetes runs: what a pod shares, how it lives and dies, and how to look inside.',
     minutes: 14,
+    plain: `Kubernetes never runs a bare container. It wraps one (sometimes a few) in a <b>pod</b> — the smallest unit it schedules onto a machine. Containers in the same pod share one network address and can share folders, like flatmates sharing one front door and a kitchen. Pods are temporary: they can crash, be restarted, or be replaced by a new pod with a new name. Understanding the life of a pod is the key to reading almost every problem in Kubernetes.`,
     learn: ['What containers in one pod share', 'Pod phases, container states and restart policies', 'Why CrashLoopBackOff happens and how to read it', 'Init containers and sidecars', 'Why you rarely create bare pods'],
     blocks: [
       ['p', `Kubernetes never runs a container on its own. It runs a <b>pod</b>: a wrapper around <b>one or more containers</b> that are always scheduled together on the same node and share some resources. Most pods have exactly one container.`],
@@ -369,10 +485,18 @@ export const BEGINNER = [
         ['kubectl', 'The Kubernetes command-line tool.'],
         ['delete', 'Remove objects.'],
         ['pod', 'The resource type.'],
-        ['web', 'The pod name. The kubelet sends SIGTERM, waits the grace period (30 s by default) and then SIGKILL.'],
+        ['web', 'The pod name. The kubelet sends <b>SIGTERM</b> (a polite “please shut down” signal), waits the grace period (30 s by default) and then <b>SIGKILL</b> (an instant, forced stop).'],
       ], try: true }],
       ['warn', `A pod you create directly is a <b>bare pod</b>. If its node dies, or you delete it, <b>nothing re-creates it</b>. In real work you almost always let a controller — a <b>Deployment</b>, StatefulSet, DaemonSet or Job — create pods for you.`],
       ['tip', `Pods are <b>disposable</b>: they get new names and new IPs when they are replaced. Never hard-code a pod IP; use a Service (lesson “Services”).`],
+      ['h', 'Common mistakes'],
+      ['list', [
+        `Creating bare pods for real apps. Nothing re-creates them; use a Deployment.`,
+        `Using <code>:latest</code> or no tag. Nodes may run different versions and rollbacks become guesswork.`,
+        `Reading <code>kubectl logs</code> without <code>--previous</code> on a crashing pod — you see the fresh restart, not the run that crashed.`,
+        `Putting two containers that listen on the same port in one pod. They share one network, so the second fails with “address already in use”.`,
+        `Expecting a restart to move the pod. Restarts happen in place, on the same node; only a new pod can land elsewhere.`,
+      ]],
     ],
     quiz: [
       { q: 'Two containers in the same pod want to talk. What address do they use?', options: ['The node IP', 'localhost', 'The Service name only', 'They cannot talk'], answer: 1, why: 'They share one network namespace, so localhost reaches the other container.' },
@@ -390,9 +514,23 @@ export const BEGINNER = [
     title: 'YAML manifests & declarative config',
     summary: 'The four parts of every object, apply vs create, diffing before you change things, and why status is not yours to write.',
     minutes: 12,
+    plain: `A <b>manifest</b> is a short text file that describes something you want in the cluster — “a Deployment called web with 3 copies of nginx”. You hand the file to Kubernetes with <code>kubectl apply</code>, and it makes the cluster match. Change the file and apply again, and it changes only what is different. Because the files can live in Git, your whole setup is written down, reviewed and repeatable.`,
     learn: ['apiVersion, kind, metadata, spec and status', 'Imperative commands vs declarative apply', 'kubectl diff, apply, delete -f and --dry-run', 'How apply tracks what changed (and server-side apply)'],
     blocks: [
       ['p', `Every Kubernetes object — a pod, a Deployment, a Service — is a record stored by the API server. A <b>manifest</b> is that record written in YAML (or JSON) in a file. Keeping your manifests in Git means your whole system is written down, reviewed and repeatable.`],
+      ['analogy', `A manifest is an order form. You fill in what you want — “3 copies, this image, this port” — and hand it in. You do not tell the kitchen how to cook. If you later hand in the same form with “5 copies”, the kitchen just makes 2 more; hand it in unchanged and nothing happens.`],
+      ['h3', 'YAML in 60 seconds'],
+      ['p', `Manifests are usually written in <b>YAML</b>, a plain-text format where indentation shows structure. Five rules cover almost everything you will write:`],
+      ['table', {
+        head: ['Rule', 'Example', 'Watch out'],
+        rows: [
+          ['<code>key: value</code> pairs', '<code>replicas: 3</code>', 'A space is required after the colon'],
+          ['Indentation means “belongs to”', '<code>metadata:</code> then <code>␣␣name: web</code>', 'Use spaces only — a tab breaks the file'],
+          ['A dash starts a list item', '<code>- name: web</code>', 'Items of one list line up under each other'],
+          ['Quote values that look like numbers or booleans', '<code>version: "1.27"</code>', '<code>1.10</code> unquoted becomes the number 1.1'],
+          ['<code>---</code> separates objects in one file', 'A Deployment, <code>---</code>, a Service', 'Each part needs its own apiVersion and kind'],
+        ],
+      }],
       ['h', 'The parts of every object'],
       ['table', {
         head: ['Field', 'What it holds', 'Who writes it'],
@@ -459,6 +597,7 @@ export const BEGINNER = [
         ['> deployment.yaml', 'Save it to a file — a perfect starting point you can then edit and apply.'],
       ] }],
       ['h', 'How apply knows what changed'],
+      ['p', `First, what one <code>kubectl apply</code> does inside the cluster: kubectl reads your file and sends it to the API server. The API server checks it against the schema (the list of allowed fields), runs its policy checks, and saves it in etcd. Nothing has started yet! The controllers and the scheduler notice the new or changed object and do the actual work — creating pods, pulling images — over the next seconds.`],
       ['p', `When you edit a file and apply it again, kubectl must work out three things: what is in your file now, what was in it last time, and what is live. Classic (client-side) apply stores your last file in the annotation <code>kubectl.kubernetes.io/last-applied-configuration</code> and does a <b>three-way merge</b>. This is how removing a line from your file also removes the field from the cluster.`],
       ['p', `<b>Server-side apply</b> (<code>kubectl apply --server-side</code>) moves this logic into the API server. Every field records which <b>field manager</b> set it (you, a controller, an autoscaler) in <code>metadata.managedFields</code>. If two managers try to own the same field you get a <b>conflict</b> instead of silently overwriting each other.`],
       ['h', 'spec is yours, status is theirs'],
@@ -479,6 +618,14 @@ export const BEGINNER = [
       ], try: true }],
       ['tip', `One file can hold several objects separated by a line with <code>---</code>. Keep related objects together (a Deployment and its Service), or keep a folder per app and run <code>kubectl apply -f k8s/</code>.`],
       ['warn', `Changing things by hand (<code>kubectl edit</code>, <code>kubectl scale</code>) makes the cluster <b>drift</b> from Git. The next apply will put your file back. Tools like Argo CD and Flux (GitOps) apply Git continuously and show drift for you.`],
+      ['h', 'Common mistakes'],
+      ['list', [
+        `Indenting with tabs or the wrong number of spaces. You get “error converting YAML to JSON” — check the line it names.`,
+        `A selector that does not match the template labels. The API server refuses with “<code>selector</code> does not match template <code>labels</code>”.`,
+        `Using an old apiVersion such as <code>extensions/v1beta1</code> for a Deployment. Check the right one with <code>kubectl api-resources</code> or <code>kubectl explain</code>.`,
+        `Fixing things with <code>kubectl edit</code> and forgetting the file. The next <code>apply</code> undoes your fix — change the file instead.`,
+        `Copying a full <code>kubectl get -o yaml</code> output back into Git, including <code>status</code>, <code>uid</code> and <code>resourceVersion</code>. Keep only what you want: apiVersion, kind, metadata (name, labels) and spec.`,
+      ]],
     ],
     quiz: [
       { q: 'Which part of an object should you never write yourself?', options: ['metadata', 'spec', 'status', 'kind'], answer: 2, why: 'status is filled in by controllers and the kubelet to report actual state.' },
@@ -496,9 +643,12 @@ export const BEGINNER = [
     title: 'Labels, selectors & annotations',
     summary: 'How Kubernetes groups things: labels to select by, selectors to choose with, annotations for everything else.',
     minutes: 10,
+    plain: `<b>Labels</b> are little name tags you stick on things, like <code>app=web</code> or <code>env=prod</code>. A <b>selector</b> is a search for those tags: “everything tagged <code>app=web</code>”. Kubernetes connects almost everything this way — a Service finds its pods, and a Deployment counts its pods, by searching labels instead of names. Get the labels right and things connect on their own; get one letter wrong and they silently stop talking.`,
     learn: ['Label syntax and the recommended labels', 'Equality-based and set-based selectors', 'Adding, changing and removing labels', 'How Services and ReplicaSets find their pods', 'When to use an annotation instead'],
     blocks: [
       ['p', `Kubernetes objects do not point at each other by name very often. Instead, they use <b>labels</b> — small key/value tags such as <code>app=web</code> or <code>env=prod</code> — and <b>selectors</b>, which are queries over those labels. A Service does not list its pods; it says “send traffic to every pod labelled <code>app=web</code>”.`],
+      ['analogy', `Labels work like hashtags. You never keep a list of every photo of the beach; you tag photos <code>#beach</code> and search for the tag. New photos with the tag show up in the search automatically, and removing the tag takes a photo out. A Service is a saved search for <code>#app=web</code>.`],
+      ['p', `Why not just use names? Because pods are replaced all the time and every replacement gets a new random name (<code>web-7d4b9c-x2kq</code>, then <code>web-7d4b9c-p8zt</code>). Labels are copied onto every new pod from its template, so the search keeps finding the right ones no matter how often they change.`],
       ['file', { name: 'pod metadata', lang: 'yaml', lines: [
         ['metadata:', ''],
         ['  name: web-1', ''],
@@ -559,6 +709,7 @@ export const BEGINNER = [
         ['--overwrite', 'Needed when the key already has a different value; without it kubectl refuses.'],
       ], try: true }],
       ['p', `To remove a label, write the key followed by a minus: <code>kubectl label pod web-2 env-</code>. You can label any object, including nodes: <code>kubectl label node worker-1 disktype=ssd</code> (used for scheduling later).`],
+      ['p', `Label changes take effect almost instantly. The moment you change a pod’s labels, the controllers that watch them recalculate: a Service adds or drops the pod from its list of endpoints (the pod IPs it sends traffic to) within a second or so, and a ReplicaSet re-counts its pods.`],
       ['h', 'How controllers use selectors'],
       ['file', { name: 'deployment + service (excerpt)', lang: 'yaml', lines: [
         ['# Deployment', ''],
@@ -586,6 +737,14 @@ export const BEGINNER = [
         ['kubernetes.io/change-cause="bump to nginx 1.27"', 'Recorded in the rollout history of the Deployment.'],
       ], try: true }],
       ['p', `Use annotations for build info, owners, links to dashboards, and configuration read by tools (ingress controllers, Prometheus, service meshes). They can hold much more data than labels — up to 256 KiB in total per object.`],
+      ['h', 'Common mistakes'],
+      ['list', [
+        `A typo in a Service selector (<code>app: wbe</code>). The Service exists but sends traffic nowhere — <code>kubectl get endpoints NAME</code> shows <code>&lt;none&gt;</code>.`,
+        `Two Deployments whose selectors match the same pods. They fight over them; give each workload a unique label combination.`,
+        `Unquoted numbers or booleans as label values in YAML (<code>version: 1.10</code>, <code>beta: true</code>). Label values must be strings — quote them.`,
+        `Trying to select by an annotation. Selectors only look at labels.`,
+        `Trying to change a Deployment’s selector. It is immutable; create a new Deployment instead.`,
+      ]],
     ],
     quiz: [
       { q: 'How does a Service know which pods to send traffic to?', options: ['A list of pod names', 'A label selector', 'Pod IPs typed in by you', 'The Deployment name'], answer: 1, why: 'A Service selects ready pods by labels, whoever created them.' },
@@ -603,6 +762,7 @@ export const BEGINNER = [
     title: 'Namespaces',
     summary: 'Split one cluster into named spaces for teams, apps and environments — and learn what they do not isolate.',
     minutes: 10,
+    plain: `One cluster is often shared by many teams and apps. A <b>namespace</b> is a named area inside the cluster — like a room in a shared house — where a team keeps its objects. Two teams can each have something called <code>web</code> as long as they are in different rooms, and each room can get its own rules and spending limits. Namespaces organise and limit; on their own, they do not lock the doors.`,
     learn: ['The namespaces every cluster starts with', 'Namespaced vs cluster-scoped resources', 'Working with -n, -A and a default namespace', 'DNS names across namespaces', 'Quotas, RBAC and the limits of namespace isolation'],
     blocks: [
       ['p', `A <b>namespace</b> is a named group of objects inside one cluster. Names must be unique <b>within</b> a namespace, so the <code>shop</code> team and the <code>blog</code> team can both have a Deployment called <code>web</code>. Namespaces are also where you attach permissions (RBAC), quotas and default limits.`],
@@ -686,6 +846,14 @@ export const BEGINNER = [
       ['warn', `Namespaces are <b>not</b> a security wall on their own. By default any pod can reach any other pod in any namespace. Combine them with <b>NetworkPolicies</b>, <b>RBAC</b>, <b>ResourceQuotas</b> and <b>Pod Security Admission</b>. For strong isolation (prod vs dev, or untrusted tenants) use separate clusters.`],
       ['warn', `<code>kubectl delete namespace shop</code> deletes <b>everything</b> inside it. The namespace shows <b>Terminating</b> until all objects are gone; if it hangs, a <b>finalizer</b> on some object is waiting for a controller that no longer exists.`],
       ['tip', `Common layouts: one namespace per team, per app, or per environment in a non-prod cluster (<code>shop-dev</code>, <code>shop-staging</code>). The kubens tool (from the kubectx project) makes switching quicker.`],
+      ['h', 'Common mistakes'],
+      ['list', [
+        `Forgetting <code>-n</code>. “No resources found in default namespace” usually means the objects live in another namespace.`,
+        `Setting a default namespace that does not exist (<code>set-context --namespace=shpo</code>). kubectl does not check; every command then finds nothing.`,
+        `Referencing a ConfigMap, Secret or PersistentVolumeClaim from another namespace. Pods can only use those from their own namespace.`,
+        `Assuming namespaces block traffic or access. Add NetworkPolicies and RBAC for that.`,
+        `Deleting a namespace to “clean up” and losing everything in it, including data claims.`,
+      ]],
     ],
     quiz: [
       { q: 'Two teams both want a Deployment called web. What makes that possible?', options: ['Labels', 'Putting them in different namespaces', 'Different nodes', 'It is impossible'], answer: 1, why: 'Names only need to be unique within one namespace.' },
@@ -703,9 +871,11 @@ export const BEGINNER = [
     title: 'ReplicaSets & self-healing',
     summary: 'The control loop at the heart of Kubernetes: keep N identical pods alive, whatever happens.',
     minutes: 11,
+    plain: `A single pod is fragile: if it dies, it stays dead. A <b>ReplicaSet</b> is a supervisor that you give one rule — “always keep 3 of these pods running” — and it checks that rule all the time. Delete a pod, crash a pod, lose a whole machine: the ReplicaSet notices the count is wrong and makes a new pod. This simple loop of “look, compare, fix” is the idea behind every part of Kubernetes.`,
     learn: ['How a control loop observes, diffs and acts', 'What a ReplicaSet guarantees', 'Owner references and garbage collection', 'What happens when a node dies', 'Why you use Deployments instead of ReplicaSets directly'],
     blocks: [
       ['p', `A bare pod is fragile: delete it, or lose its node, and it is gone. A <b>ReplicaSet</b> fixes that. You tell it “I want <b>3</b> pods that look like this template, selected by <code>app=web</code>” and its controller makes sure there are always exactly 3.`],
+      ['analogy', `A ReplicaSet works like a thermostat. You set the temperature (3 pods) and walk away. It keeps checking the room: too cold, it heats; too warm, it cools. It does not care <i>why</i> the temperature changed — an open window or a sunny afternoon — only that it is off.`],
       ['h', 'The control loop'],
       ['p', `Every Kubernetes controller runs the same simple loop, over and over:`],
       ['list', [
@@ -784,6 +954,13 @@ export const BEGINNER = [
         ],
       }],
       ['p', `In practice you create <b>Deployments</b>, and they create and manage ReplicaSets for you — one per version of your pod template. That is the topic of the first intermediate lesson.`],
+      ['h', 'Common mistakes'],
+      ['list', [
+        `Changing a ReplicaSet’s image and expecting running pods to update. Only new pods use the new template — that is what Deployments are for.`,
+        `Scaling a ReplicaSet that a Deployment owns. The Deployment sets it back; scale the Deployment instead.`,
+        `Deleting pods to “stop” an app. The ReplicaSet just creates new ones; scale to 0 or delete the owner.`,
+        `Giving a hand-made pod the same labels as a ReplicaSet. It gets adopted and may be deleted.`,
+      ]],
     ],
     quiz: [
       { q: 'What does a ReplicaSet controller do when it finds 2 pods but wants 3?', options: ['Restarts the cluster', 'Creates one pod from its template', 'Waits for you to run kubectl', 'Deletes all pods and starts again'], answer: 1, why: 'Observe → diff → act: it creates exactly the missing pod.' },

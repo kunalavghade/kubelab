@@ -11,6 +11,7 @@ import { renderPlayground } from './playground.js';
 import { renderCommandIndex, renderCommandPage } from './commands.js';
 import { REFERENCE, refById, entryFor, shortCmd } from './reference.js';
 import { lessonCommands, homeLesson, linkCommands } from './sync.js';
+import { GLOSSARY_INDEX, termsInLesson } from './glossary.js';
 
 const view = document.getElementById('view');
 const sidebar = document.getElementById('sidebar');
@@ -54,7 +55,8 @@ const renderSidebar = (activeId = currentLessonId()) => {
     h('div', { class: 'side-level side-extra' },
       h('a', { class: `side-link ${activeId === 'commands' || onCommand ? 'active' : ''}`, href: '#/commands' }, h('span', { class: 'side-num' }, '📚'), `Command reference (${REFERENCE.length})`),
       h('a', { class: `side-link ${activeId === 'playground' ? 'active' : ''}`, href: '#/playground' }, h('span', { class: 'side-num' }, '▶'), 'Playground'),
-      h('a', { class: `side-link ${activeId === 'cheatsheet' ? 'active' : ''}`, href: '#/cheatsheet' }, h('span', { class: 'side-num' }, '≡'), 'Cheat sheet')));
+      h('a', { class: `side-link ${activeId === 'cheatsheet' ? 'active' : ''}`, href: '#/cheatsheet' }, h('span', { class: 'side-num' }, '≡'), 'Cheat sheet'),
+      h('a', { class: `side-link ${activeId === 'glossary' ? 'active' : ''}`, href: '#/glossary' }, h('span', { class: 'side-num' }, '📖'), 'Glossary')));
   sidebar.querySelector('.side-cmd.active, .side-link.active')?.scrollIntoView({ block: 'nearest' });
 };
 
@@ -80,6 +82,7 @@ const renderHome = () => {
         ['🔍 Explained commands', 'Hover any part of a command to see exactly what it does.'],
         ['📄 Explained manifests', 'Deployments, Services, Ingress, RBAC, Helm charts — every YAML line explained.'],
         ['📚 Every command', `${REFERENCE.length} commands, each with options, examples, errors and a live lab.`],
+        ['📖 Plain-English glossary', 'Every term in one simple sentence first, then the detail.'],
         ['🧪 Playground', 'A simulated multi-node cluster with real controllers and challenges. Safe to break.']]
         .map(([b, t]) => h('div', { class: 'feature' }, h('b', {}, b), h('span', {}, t)))),
     ...LEVELS.flatMap((lvl) => [
@@ -130,6 +133,49 @@ const lessonCommandBox = (lessonId) => {
     h('p', {}, 'Dark blue = taught here. Each one opens a full page with every option and a live lab. Commands in the text below are links too.'));
 };
 
+// Jargon the lesson uses, each with a one-line plain-English meaning (from the glossary).
+const keyTermsBox = (lesson) => {
+  const terms = termsInLesson(lesson);
+  if (!terms.length) return null;
+  return h('details', { class: 'terms-box', open: '' },
+    h('summary', {}, `📖 Key terms in this lesson · ${terms.length}`),
+    h('dl', {}, terms.map((g) => [h('dt', {}, h('a', { href: `#/glossary?t=${g.slug}` }, g.term)), h('dd', {}, g.simple)])),
+    h('p', { class: 'muted' }, 'Every term is in the ', h('a', { href: '#/glossary' }, 'glossary'), ' with more detail and the lesson that teaches it.'));
+};
+
+const renderGlossary = (focus) => {
+  setPage('Kubernetes glossary — every term in plain English | Kube Lab', 'Every Kubernetes term explained in plain English: pods, nodes, Deployments, Services, Ingress, ConfigMaps, Secrets, volumes, probes, RBAC, taints, HPA, Helm, operators and more.');
+  const list = h('div', { class: 'gl-list' });
+  const letters = h('div', { class: 'ref-jump' });
+  const sorted = [...GLOSSARY_INDEX].sort((a, b) => a.term.localeCompare(b.term, undefined, { sensitivity: 'base' }));
+  const draw = (q = '') => {
+    const needle = q.trim().toLowerCase();
+    const hits = sorted.filter((g) => !needle || `${g.term} ${g.aka.join(' ')} ${g.simple} ${g.more}`.toLowerCase().includes(needle));
+    const groups = new Map();
+    hits.forEach((g) => { const k = g.term[0].toUpperCase(); groups.set(k, [...(groups.get(k) || []), g]); });
+    list.replaceChildren(...[...groups.entries()].map(([letter, items]) => h('section', { id: `gl-${letter}` },
+      h('h2', { class: 'gl-letter' }, letter),
+      items.map((g) => {
+        const lesson = LESSONS.find((l) => l.id === g.lesson);
+        return h('div', { class: `gl-item ${g.slug === focus ? 'focus' : ''}`, id: `term-${g.slug}` },
+          h('h3', {}, g.term, g.aka.length ? h('small', {}, ` also: ${g.aka.slice(0, 3).join(', ')}`) : null),
+          h('p', { class: 'gl-simple' }, g.simple),
+          h('p', { class: 'muted' }, g.more),
+          lesson ? h('a', { class: 'chip light', href: `#/lesson/${lesson.id}` }, `🎬 Lesson ${LESSONS.indexOf(lesson) + 1}: ${lesson.title}`) : null);
+      }))));
+    if (!hits.length) list.append(h('p', { class: 'pg-empty' }, 'No term matches your search.'));
+    letters.replaceChildren(...[...groups.keys()].map((k) => h('a', { class: 'chip', href: '#/glossary', onclick: (e) => { e.preventDefault(); document.getElementById(`gl-${k}`)?.scrollIntoView({ behavior: 'smooth' }); } }, k)));
+  };
+  view.append(h('div', { class: 'lesson', style: { maxWidth: '1000px' } },
+    h('div', { class: 'lesson-head' }, h('div', { class: 'meta' }, h('span', { class: 'badge' }, '📖 Glossary'), h('span', {}, `${GLOSSARY_INDEX.length} terms`)),
+      h('h1', {}, 'Kubernetes in plain English'),
+      h('p', { class: 'lead' }, 'Every word you will meet, explained in one simple sentence first, then a little more detail, with the lesson that teaches it.')),
+    h('input', { class: 'cs-search', type: 'search', placeholder: 'Search terms… (e.g. pod, taint, ingress)', oninput: (e) => draw(e.target.value), 'aria-label': 'Search the glossary' }),
+    letters, list));
+  draw();
+  if (focus) queueMicrotask(() => document.getElementById(`term-${focus}`)?.scrollIntoView({ block: 'center' }));
+};
+
 const renderLesson = (id) => {
   const idx = LESSONS.findIndex((l) => l.id === id);
   if (idx < 0) return renderNotFound();
@@ -147,9 +193,11 @@ const renderLesson = (id) => {
       h('div', { class: 'meta' }, h('span', { class: `badge ${l.level}` }, l.level), h('span', {}, `Lesson ${idx + 1} of ${LESSONS.length}`), h('span', {}, `· ${l.minutes} min`)),
       h('h1', {}, l.title),
       h('p', { class: 'lead' }, l.summary),
+      l.plain ? h('div', { class: 'plain-box' }, h('span', { class: 'ico' }, '🧒'), h('div', {}, h('b', {}, 'In plain words'), h('p', { html: l.plain }))) : null,
       h('div', { class: 'learn-grid' },
         h('div', { class: 'learn-box' }, h('h4', {}, 'You will learn'), h('ul', {}, l.learn.map((t) => h('li', {}, t)))),
-        lessonCommandBox(l.id))),
+        lessonCommandBox(l.id)),
+      keyTermsBox(l)),
     l.blocks.map(([type, data]) => (BLOCKS[type] ? BLOCKS[type](data) : null)),
     quizBlock(l.quiz, () => { if (!done.has(l.id)) { markDone(l.id); syncComplete(); } }),
     h('div', { class: 'complete-row' }, h('span', {}, 'Answer every quiz question correctly to complete the lesson automatically — or mark it yourself.'), completeBtn),
@@ -217,6 +265,7 @@ const route = () => {
     case 'lesson': setTopNav(''); renderLesson(id); break;
     case 'playground': setPage('Kubernetes playground — run kubectl in your browser | Kube Lab', 'Practise Kubernetes in the browser on a simulated multi-node cluster: deploy, scale, expose, roll out, break and debug, with challenges. Nothing to install.'); setTopNav('playground'); renderPlayground(view, new URLSearchParams(query).get('cmd')); break;
     case 'cheatsheet': setTopNav('cheatsheet'); renderCheatsheet(); break;
+    case 'glossary': setTopNav('glossary'); renderGlossary(new URLSearchParams(query).get('t')); break;
     case 'commands':
       setTopNav('commands');
       if (!id) renderCommandIndex(view, new URLSearchParams(query).get('q') || '');

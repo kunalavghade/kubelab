@@ -838,3 +838,25 @@ table.ref td:first-child { min-width: 0; }
 .pg-out > div { white-space: pre; width: max-content; min-width: 100%; }
 .pg-out > div.bad, .pg-out > div.dim, .pg-out > div.warn, .pg-out > div.ok, .pg-out > div.msg { white-space: pre-wrap; width: auto; overflow-wrap: anywhere; }
 .pg-out > .warn { color: #ffd479; }
+
+/* ---------- Plain words, key terms and glossary ---------- */
+.plain-box { display: flex; gap: 12px; margin: 16px 0 0; padding: 14px 16px; border: var(--bw) solid var(--line); border-radius: var(--radius); background: var(--ok-bg); box-shadow: 3px 3px 0 var(--ok); }
+.plain-box .ico { font-size: 24px; line-height: 1; }
+.plain-box > div > b { font-family: var(--font-head); display: block; margin-bottom: 4px; }
+.plain-box p { margin: 0; font-size: 16.5px; }
+.terms-box { margin-top: 14px; border: var(--bw) solid var(--line); border-radius: var(--radius); background: #fff; padding: 10px 14px; }
+.terms-box summary { cursor: pointer; font: 700 13px var(--font-head); text-transform: uppercase; letter-spacing: 0.04em; color: var(--blue-800); }
+.terms-box dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 10px 0 6px; font-size: 14.5px; }
+.terms-box dt a { font-weight: 700; text-decoration: none; }
+.terms-box dd { margin: 0; color: var(--muted); }
+.terms-box .muted { font-size: 13px; margin: 4px 0 0; }
+.gl-letter { margin: 26px 0 8px; color: var(--blue); border-bottom: var(--bw) solid var(--soft-line); }
+.gl-item { padding: 10px 14px; border: var(--bw) solid var(--line); border-radius: 10px; margin-bottom: 10px; background: #fff; }
+.gl-item.focus { box-shadow: var(--shadow); background: var(--blue-50); }
+.gl-item h3 { margin: 0 0 4px; font-size: 18px; }
+.gl-item h3 small { font: 500 12px var(--font); color: var(--muted); }
+.gl-simple { margin: 0 0 4px; font-size: 16px; }
+.gl-item .muted { margin: 0 0 8px; font-size: 14px; }
+@media (max-width: 560px) { .terms-box dl { grid-template-columns: 1fr; gap: 0 0; } .terms-box dd { margin-bottom: 8px; } }
+.top-links a { white-space: nowrap; }
+@media (max-width: 1150px) { .top-links a { padding: 6px 8px; } .top-links { margin-left: 4px; gap: 2px; } .gh-link span { display: none; } .gh-link { padding: 6px; } }

@@ -1432,7 +1432,7 @@ A.rsControlLoop = (root) => {
   cmdBtn(s, 'kubectl get rs', getRs, { cmd: /^kubectl get (?:rs|replicasets?)(?: web)?$/ });
   cmdBtn(s, 'kubectl get pods -o wide', getPods, { cmd: /^kubectl get (?:pods?|po)(?: -o wide)?$/ });
   s.btn('🗑 Delete a random pod', () => deletePod('', null), { primary: true, enabled: () => Boolean(pickVictim()) });
-  s.command([/^kubectl delete (?:pods?|po)(?:\/| )([a-z0-9-]+)$/], (_, m) => deletePod(m.input, m), { example: 'kubectl delete pod web-xxxxx' });
+  s.command([/^kubectl delete (?:pods?|po)(?:\/| )([a-z0-9-]+)$/], (_, m) => deletePod(m.input, m), { example: () => `kubectl delete pod ${live()[0]?.name || 'web-xxxxx'}` });
   cmdBtn(s, 'kubectl scale rs web --replicas=5', scale, { cmd: /^kubectl scale (?:rs|replicasets?)(?:\/| )web --replicas[= ]?(\d+)$/ });
   cmdBtn(s, 'kubectl scale rs web --replicas=2', scale, { cmd: [] });
   s.sep();
@@ -1449,5 +1449,109 @@ A.rsControlLoop = (root) => {
     st.nodes.forEach((n) => { nodesWrap.append(n.box.el); addPod(n); });
     renderCount();
   };
+  reset();
+};
+
+// =====================================================================
+// 0. Containers primer: one image → many containers → one machine is not enough
+// =====================================================================
+const PRIMER_IMAGES = { nginx: ['debian base', 'nginx', 'config'], redis: ['debian base', 'redis', 'config'], postgres: ['debian base', 'postgres', 'init scripts'] };
+const PRIMER_MAX = 5; // containers that fit on the machine
+
+A.primerImageToContainers = (root) => {
+  const s = scene(root, { title: 'From image to containers', hint: 'Pull an image, start containers from it, then see what happens when the machine fills up or dies.' });
+  let st = { images: new Set(), containers: [], dead: false, next: 1 };
+
+  const term = mkTerm({ height: '150px' });
+  const registry = h('div', { class: 'chips' });
+  const imgZone = h('div', { class: 'b-primer-images' });
+  const ctrZone = h('div', { class: 'b-primer-ctrs' });
+  const meter = helpers.mkBar();
+  const meterText = h('small', { class: 'b-primer-meter' });
+  const machine = h('div', { class: 'node b-primer-machine' }, title('🖥 server-1', 'one machine'), zone('Images on this machine', imgZone), h('div', { style: { height: '8px' } }), zone('Running containers', ctrZone), h('div', { class: 'b-primer-cap' }, h('span', {}, 'Memory used'), meter, meterText));
+  const regChips = Object.fromEntries(Object.keys(PRIMER_IMAGES).map((name) => [name, h('span', { class: 'chip light' }, `📦 ${name}:latest`)]));
+  registry.append(...Object.values(regChips));
+  s.stage.append(h('div', { class: 'b-primer' },
+    h('div', { class: 'node' }, title('☁ Registry', 'Docker Hub'), registry, h('p', { class: 'b-empty', style: { marginTop: '8px' } }, 'Images wait here until a machine pulls them.')),
+    machine), term);
+  out(term, '<span class="dim"># your terminal on server-1</span>');
+
+  const drawMeter = () => {
+    helpers.setBar(meter, (st.containers.length / PRIMER_MAX) * 100);
+    meterText.textContent = `${st.containers.length} of ${PRIMER_MAX} containers fit`;
+  };
+  const drawImages = () => imgZone.replaceChildren(...[...st.images].map((name) => h('div', { class: 'b-primer-img' },
+    h('b', {}, `${name}:latest`), ...PRIMER_IMAGES[name].map((layer) => h('span', { class: 'b-primer-layer' }, layer)))));
+  const reset = () => {
+    st = { images: new Set(), containers: [], dead: false, next: 1 };
+    ctrZone.replaceChildren(h('p', { class: 'b-empty' }, 'No containers yet.'));
+    machine.classList.remove('b-primer-dead');
+    drawImages();
+    drawMeter();
+  };
+
+  const pull = async (name, line) => {
+    if (line) typed(term, line);
+    if (st.images.has(name)) { out(term, `Status: Image is up to date for ${name}:latest`); return s.say(`<b>${name}</b> is already on this machine, so nothing is downloaded.`); }
+    s.say(`Downloading the <b>${name}</b> image layer by layer from the registry…`);
+    for (const layer of PRIMER_IMAGES[name]) {
+      await fly(s.stage, regChips[name], imgZone, { label: layer, ms: 700 });
+      out(term, `${shortHash()}${shortHash()}: Pull complete   <span class="dim">(${layer})</span>`);
+    }
+    st.images.add(name);
+    drawImages();
+    out(term, `Status: Downloaded newer image for ${name}:latest`);
+    s.say(`The image is now stored on the machine: <b>read-only layers</b> stacked on top of each other. It is a template — nothing is running yet.`);
+  };
+
+  const run = async (name, line) => {
+    typed(term, line);
+    if (!st.images.has(name)) {
+      out(term, `Unable to find image '${name}:latest' locally`);
+      await pull(name, null);
+    }
+    if (st.containers.length >= PRIMER_MAX) {
+      out(term, '<span class="bad">docker: Error response from daemon: cannot allocate memory.</span>');
+      machine.classList.add('shake');
+      setTimeout(() => machine.classList.remove('shake'), 500);
+      return s.say(`The machine is <b>full</b>. To run more you need more machines — and then someone has to decide which machine runs what. That job is called <b>orchestration</b>.`);
+    }
+    if (!st.containers.length) ctrZone.replaceChildren();
+    const ctrName = `${name}-${st.next++}`;
+    const pod = podEl(ctrName, { status: 'creating', image: `${name}:latest` });
+    st.containers.push({ name: ctrName, image: name, el: pod });
+    ctrZone.append(pod);
+    out(term, `${shortHash()}${shortHash()}${shortHash()}`);
+    drawMeter();
+    await wait(400);
+    pod.setStatus('ready');
+    s.say(`A <b>container</b> is the image running: a normal program fenced off from the others. You started ${st.containers.length} container${st.containers.length > 1 ? 's' : ''} — ${st.containers.filter((c) => c.image === name).length} from the same <b>${name}</b> image.`);
+  };
+
+  const ps = (line) => {
+    typed(term, line);
+    const rows = [['CONTAINER ID', 'IMAGE', 'STATUS', 'NAMES'], ...st.containers.map((c) => [shortHash() + shortHash(), `${c.image}:latest`, st.dead ? 'Exited (137)' : 'Up 5 seconds', c.name])];
+    printTable(term, rows);
+    s.say(st.dead ? 'Every container stopped with the machine. Nothing restarts them anywhere else.' : `${st.containers.length} running container${st.containers.length === 1 ? '' : 's'}, all on this one machine.`);
+  };
+
+  const imageName = (m) => (m?.[1] || 'nginx').replace(/:.*$/, '');
+  cmdBtn(s, 'docker pull nginx', (line, m) => pull(imageName(m), line), { cmd: /^docker (?:image )?pull (nginx|redis|postgres)(?::[\w.]+)?$/, primary: true, example: 'docker pull nginx', enabled: () => !st.dead, why: 'The machine is down — press ↺ Reset.' });
+  cmdBtn(s, 'docker run -d nginx', (line, m) => run(imageName(m), line), { cmd: /^docker (?:container )?run (?:-d |--detach )?(?:--name \S+ )?(?:-p \S+ )?(nginx|redis|postgres)(?::[\w.]+)?$/, example: 'docker run -d nginx', enabled: () => !st.dead, why: 'The machine is down — press ↺ Reset.' });
+  cmdBtn(s, 'docker ps', (line) => ps(line), { cmd: /^docker (?:ps|container ls)(?: -a)?$/ });
+  s.command(/^docker images$|^docker image ls$/, async (_, m) => {
+    typed(term, m.input);
+    printTable(term, [['REPOSITORY', 'TAG', 'IMAGE ID'], ...[...st.images].map((name) => [name, 'latest', shortHash() + shortHash()])]);
+    s.say(st.images.size ? 'Images are templates kept on the machine, ready to start containers from.' : 'No images yet — pull one first.');
+  }, { example: 'docker images' });
+  s.sep();
+  s.btn('💥 Machine dies', async () => {
+    st.dead = true;
+    machine.classList.add('b-primer-dead');
+    st.containers.forEach((c) => c.el.setStatus('failed'));
+    out(term, '<span class="bad">Connection to server-1 closed.</span>');
+    s.say(`The machine died and took every container with it. Docker on one machine cannot move them anywhere else, and nobody restarts them until a human notices. <b>Kubernetes</b> watches many machines and re-creates containers on healthy ones — that is the rest of this course.`);
+  }, { enabled: () => st.containers.length > 0 && !st.dead });
+  s.btn('↺ Reset', async () => { reset(); s.say('Reset. Pull an image to begin.'); });
   reset();
 };

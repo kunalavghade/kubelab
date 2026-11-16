@@ -655,4 +655,218 @@ spec:
   - port: {{ .Values.service.port }}
     targetPort: 8080
 `,
+  'shop/00-namespace.yaml': `apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop
+  labels:
+    app.kubernetes.io/part-of: shop
+`,
+  'shop/10-config.yaml': `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shop-config
+  namespace: shop
+data:
+  APP_MODE: production
+  DB_HOST: db-0.db
+  DB_NAME: shop
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: shop
+type: Opaque
+stringData:
+  POSTGRES_USER: shop
+  POSTGRES_PASSWORD: change-me-please
+`,
+  'shop/20-database.yaml': `apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: shop
+spec:
+  clusterIP: None
+  selector:
+    app: db
+  ports:
+  - port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: shop
+spec:
+  serviceName: db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:17
+        envFrom:
+        - secretRef:
+            name: db-credentials
+        ports:
+        - containerPort: 5432
+        readinessProbe:
+          tcpSocket:
+            port: 5432
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+`,
+  'shop/30-api.yaml': `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: shop
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+      - name: api
+        image: kubelab/hello:1.0
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: shop-config
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: POSTGRES_PASSWORD
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: shop
+spec:
+  selector:
+    app: api
+  ports:
+  - port: 80
+    targetPort: 8080
+`,
+  'shop/40-web.yaml': `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: shop
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 32Mi
+          limits:
+            memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: shop
+spec:
+  selector:
+    app: web
+  ports:
+  - port: 80
+    targetPort: 80
+`,
+  'shop/60-ingress.yaml': `apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop
+  namespace: shop
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: shop.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: web
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api
+            port:
+              number: 80
+`,
 };

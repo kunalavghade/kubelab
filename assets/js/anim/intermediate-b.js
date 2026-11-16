@@ -1143,3 +1143,225 @@ A.statefulsetOrder = (root) => {
     s.say('Reset. Apply statefulset.yaml to begin.');
   });
 };
+
+// =====================================================================
+// Capstone: build the shop layer by layer, then follow one request through it
+// =====================================================================
+A.firstAppStack = (root) => {
+  const s = scene(root, { title: 'Build the shop, one file at a time', hint: 'Apply the files in order (or all of <code>shop/</code> at once), then send a request and follow it to the database.' });
+  const term = mkTerm({ height: '150px' });
+  const browser = h('div', { class: 'ib-browser' }, '🌍 browser', h('small', {}, 'shop.example.com'));
+  const card = (icon, name, sub) => {
+    const el = objCard(icon, name);
+    el.title = sub;
+    return el;
+  };
+  const cards = {
+    ing: card('🚪', 'Ingress shop', 'host shop.example.com: / → web, /api → api'),
+    webSvc: card('🌐', 'Service web', 'ClusterIP → app=web pods'),
+    apiSvc: card('🌐', 'Service api', 'ClusterIP → app=api pods'),
+    dbSvc: card('🌐', 'Service db (headless)', 'gives db-0 the name db-0.db'),
+    cm: card('📄', 'ConfigMap shop-config', 'APP_MODE, DB_HOST, DB_NAME'),
+    secret: card('🔐', 'Secret db-credentials', 'POSTGRES_USER, POSTGRES_PASSWORD'),
+    pvc: card('💾', 'PVC data-db-0', '1Gi ReadWriteOnce'),
+  };
+  const pods = { web: h('div', { class: 'ib-app-pods' }), api: h('div', { class: 'ib-app-pods' }), db: h('div', { class: 'ib-app-pods' }) };
+  const nsFrame = h('div', { class: 'ib-ns ghost' },
+    h('div', { class: 'ib-ns-title' }, '📁 namespace shop'),
+    h('div', { class: 'ib-layer' }, h('small', {}, 'front door'), cards.ing),
+    h('div', { class: 'ib-layer two' },
+      h('div', { class: 'ib-tier' }, h('small', {}, 'web'), cards.webSvc, pods.web),
+      h('div', { class: 'ib-tier' }, h('small', {}, 'api'), cards.apiSvc, pods.api)),
+    h('div', { class: 'ib-layer two' },
+      h('div', { class: 'ib-tier' }, h('small', {}, 'database'), cards.dbSvc, pods.db, cards.pvc),
+      h('div', { class: 'ib-tier' }, h('small', {}, 'config'), cards.cm, cards.secret)));
+  s.stage.append(h('div', { class: 'ib-app' }, h('div', { class: 'ib-app-side' }, browser, term), nsFrame));
+
+  let st = { ns: false, config: false, db: false, api: false, web: false, ing: false, podEls: { web: [], api: [], db: [] }, gen: 0 };
+  const FILES = [
+    ['00-namespace.yaml', 'ns'], ['10-config.yaml', 'config'], ['20-database.yaml', 'db'], ['30-api.yaml', 'api'], ['40-web.yaml', 'web'], ['60-ingress.yaml', 'ing'],
+  ];
+  const nextFile = () => FILES.find(([, key]) => !st[key]);
+  const CREATES = { ns: ['namespace/shop'], config: ['configmap/shop-config', 'secret/db-credentials'], db: ['service/db', 'statefulset.apps/db'], api: ['deployment.apps/api', 'service/api'], web: ['deployment.apps/web', 'service/web'], ing: ['ingress.networking.k8s.io/shop'] };
+  const ready = (tier) => st.podEls[tier].some((p) => p.dataset.status === 'ready');
+
+  // A pod that reads the ConfigMap/Secret waits in CreateContainerConfigError until they exist.
+  const startPod = async (tier, name, image, needsConfig) => {
+    const gen = st.gen;
+    const el = podEl(name, { status: 'pending', image });
+    el.needsConfig = needsConfig;
+    pods[tier].append(el);
+    st.podEls[tier].push(el);
+    await wait(300);
+    if (gen !== st.gen) return;
+    el.setStatus('creating');
+    await wait(500);
+    if (gen !== st.gen) return;
+    if (needsConfig && !st.config) {
+      setPodText(el, 'failed', 'CreateContainerConfigError');
+      return;
+    }
+    el.setStatus('running');
+    await wait(400);
+    if (gen === st.gen) el.setStatus('ready');
+  };
+  const unblock = () => Promise.all(Object.values(st.podEls).flat().filter((p) => p.dataset.status === 'failed').map(async (p) => {
+    p.setStatus('creating');
+    await wait(400);
+    p.setStatus('running');
+    await wait(300);
+    p.setStatus('ready');
+  }));
+
+  const APPLY = {
+    ns: async () => {
+      print(term, 'namespace/shop created');
+      nsFrame.className = 'ib-ns';
+      flash(nsFrame);
+      s.say('The <b>namespace</b> exists: an empty, private area. Everything else goes inside it.');
+    },
+    config: async () => {
+      print(term, 'configmap/shop-config created');
+      print(term, 'secret/db-credentials created');
+      cards.cm.set('3 keys', 'ok');
+      cards.secret.set('2 keys (base64)', 'warn');
+      const waiting = Object.values(st.podEls).flat().some((p) => p.dataset.status === 'failed');
+      s.say(waiting ? 'The settings exist now, so the stuck pods can finally build their environment and start.' : 'Settings and the password are stored <b>outside the images</b>. Pods will read them as environment variables.');
+      if (waiting) await unblock();
+    },
+    db: async () => {
+      print(term, 'service/db created');
+      print(term, 'statefulset.apps/db created');
+      cards.dbSvc.set('clusterIP: None', 'ok');
+      cards.pvc.set('Pending → waiting for the pod', 'warn');
+      const start = startPod('db', 'db-0', 'postgres:17', true);
+      await wait(600);
+      cards.pvc.set('Bound · 1Gi', 'ok');
+      await start;
+      s.say(st.config ? '<b>db-0</b> runs with its own disk <b>data-db-0</b>, reachable inside the cluster as <code>db-0.db</code>.' : '<b>db-0</b> is stuck in <b>CreateContainerConfigError</b>: it needs the Secret, which doesn’t exist yet. Apply <code>shop/10-config.yaml</code> and watch it recover.');
+    },
+    api: async () => {
+      print(term, 'deployment.apps/api created');
+      print(term, 'service/api created');
+      cards.apiSvc.set('endpoints: none yet', 'warn');
+      await Promise.all([startPod('api', `api-${shortHash()}`, 'kubelab/hello:1.0', true), startPod('api', `api-${shortHash()}`, 'kubelab/hello:1.0', true)]);
+      if (ready('api')) cards.apiSvc.set('2 endpoints', 'ok');
+      s.say(ready('api') ? 'Two <b>api</b> pods, ready, behind one stable Service address. The Service only lists pods whose readiness probe passes.' : 'The api pods wait for the ConfigMap and Secret they read. Apply <code>shop/10-config.yaml</code>.');
+    },
+    web: async () => {
+      print(term, 'deployment.apps/web created');
+      print(term, 'service/web created');
+      cards.webSvc.set('endpoints: none yet', 'warn');
+      await Promise.all([startPod('web', `web-${shortHash()}`, 'nginx:1.27', false), startPod('web', `web-${shortHash()}`, 'nginx:1.27', false)]);
+      cards.webSvc.set('2 endpoints', 'ok');
+      s.say('Two <b>web</b> pods behind the <b>web</b> Service. Nothing outside the cluster can reach them yet — that is the Ingress’s job.');
+    },
+    ing: async () => {
+      print(term, 'ingress.networking.k8s.io/shop created');
+      cards.ing.set('ADDRESS 172.18.255.200', 'ok');
+      s.say('The <b>Ingress</b> opens the front door: <code>/</code> goes to web, <code>/api</code> goes to api. Now send a request.');
+    },
+  };
+
+  const applyFile = async (file, key) => {
+    typed(term, `kubectl apply -f shop/${file}`);
+    if (key !== 'ns' && !st.ns) {
+      print(term, `Error from server (NotFound): error when creating "shop/${file}": namespaces "shop" not found`, 'bad');
+      return s.say('Every object in the file says <code>namespace: shop</code>, and that namespace doesn’t exist yet. Apply <code>shop/00-namespace.yaml</code> first.');
+    }
+    st[key] = true;
+    await APPLY[key]();
+    if (key === 'api' || key === 'db') {
+      if (st.config && ready('api')) cards.apiSvc.set('2 endpoints', 'ok');
+    }
+  };
+
+  FILES.forEach(([file, key], i) => s.btn(`kubectl apply -f shop/${file}`, () => applyFile(file, key), {
+    primary: i === 0,
+    cmd: new RegExp(`^kubectl (?:apply|create) -f shop/${file.replace('.', '\\.')}(?: -n shop)?$`),
+    enabled: () => !st[key],
+    why: `shop/${file} is already applied — kubectl apply would just say “unchanged”.`,
+  }));
+
+  s.command(/^kubectl apply -f shop\/?(?: -n shop)?$/, async () => {
+    typed(term, 'kubectl apply -f shop/');
+    for (const [file, key] of FILES) {
+      if (st[key]) { CREATES[key].forEach((obj) => print(term, `${obj} unchanged`, 'dim')); continue; }
+      st[key] = true;
+      await APPLY[key]();
+    }
+    if (ready('api')) cards.apiSvc.set('2 endpoints', 'ok');
+    s.say('The whole folder, applied in file-name order. Run it again and every object is <b>unchanged</b> — that’s declarative config.');
+  }, { example: 'kubectl apply -f shop/', enabled: () => !!nextFile(), why: 'Everything is already applied.' });
+
+  s.sep();
+  const travel = async (from, to, label, cls = '') => { await fly(s.stage, from, to, { label, cls, ms: 550 }); flash(to); };
+  const request = async (path) => {
+    typed(term, `curl http://shop.example.com${path}`);
+    if (!st.ing) return print(term, 'curl: (6) Could not resolve host: shop.example.com', 'bad');
+    const tier = path.startsWith('/api') ? 'api' : 'web';
+    await travel(browser, cards.ing, `GET ${path}`);
+    const svc = tier === 'api' ? cards.apiSvc : cards.webSvc;
+    if (!st[tier]) {
+      await travel(cards.ing, browser, '404', 'white');
+      print(term, '404 Not Found  (no Service web/api exists yet)', 'bad');
+      return s.say(`The Ingress has a rule for <code>${path}</code>, but the <b>${tier}</b> Service doesn’t exist yet.`);
+    }
+    await travel(cards.ing, svc, `→ svc/${tier}`);
+    const pod = st.podEls[tier].filter((p) => p.dataset.status === 'ready')[Math.floor(Math.random() * 2)] || st.podEls[tier].find((p) => p.dataset.status === 'ready');
+    if (!pod) {
+      await travel(svc, browser, '503', 'white');
+      print(term, '503 Service Temporarily Unavailable', 'bad');
+      return s.say(`The <b>${tier}</b> Service has <b>no ready endpoints</b>, so the Ingress answers 503. Check <code>kubectl get endpoints ${tier} -n shop</code> and the pods.`);
+    }
+    await travel(svc, pod, 'pick a ready pod');
+    if (tier === 'api') {
+      const db = st.podEls.db.find((p) => p.dataset.status === 'ready');
+      if (db) {
+        await travel(pod, db, 'SQL → db-0.db:5432');
+        await travel(db, pod, 'rows', 'white');
+      }
+      await travel(pod, browser, '200 OK', 'white');
+      print(term, `Hello from ${pod.title} (version 1.0)`);
+      return s.say(db ? `Browser → <b>Ingress</b> → <b>Service api</b> → one api pod → <b>db-0</b> (by its stable DNS name) and back. Every hop is a separate Kubernetes object you created.` : 'The api answered, but there is no database yet — apply <code>shop/20-database.yaml</code> to see the full path.');
+    }
+    await travel(pod, browser, '200 OK', 'white');
+    print(term, '<h1>Welcome to nginx!</h1>');
+    s.say('Browser → <b>Ingress</b> (rule <code>/</code>) → <b>Service web</b> → one of the web pods, which sends the page back.');
+  };
+  s.btn('curl http://shop.example.com/api', () => request('/api'), { cmd: /^curl (?:-s )?(?:http:\/\/)?shop\.example\.com\/api\S*$/, enabled: () => st.ns });
+  s.btn('curl http://shop.example.com/', () => request('/'), { cmd: /^curl (?:-s )?(?:http:\/\/)?shop\.example\.com\/?$/, enabled: () => st.ns });
+
+  s.btn('kubectl scale deployment web -n shop --replicas=0', async () => {
+    typed(term, 'kubectl scale deployment web -n shop --replicas=0');
+    print(term, 'deployment.apps/web scaled');
+    st.podEls.web.forEach((p) => p.setStatus('terminating'));
+    await wait(500);
+    st.podEls.web.forEach((p) => p.vanish());
+    st.podEls.web = [];
+    cards.webSvc.set('endpoints: <none>', 'bad');
+    s.say('The web Service still exists, but nothing is behind it. Try <code>curl http://shop.example.com/</code> — you will get a 503.');
+  }, { cmd: /^kubectl scale (?:deploy(?:ment)?s?[/ ]web) -n shop --replicas[= ]?0$/, enabled: () => st.web && st.podEls.web.length > 0, why: 'There are no web pods to remove.' });
+
+  s.btn('kubectl delete namespace shop', async () => {
+    typed(term, 'kubectl delete namespace shop');
+    print(term, 'namespace "shop" deleted');
+    st.gen++;
+    Object.values(st.podEls).flat().forEach((p) => p.setStatus('terminating'));
+    await wait(600);
+    resetAll();
+    s.say('Deleting the namespace deleted <b>everything inside it</b> — pods, Services, the Secret and the PVC. Start again with the namespace.');
+  }, { cmd: /^kubectl delete (?:ns|namespaces?)[ /]shop$/, enabled: () => st.ns, why: 'The namespace doesn’t exist.' });
+
+  const resetAll = () => {
+    st = { ns: false, config: false, db: false, api: false, web: false, ing: false, podEls: { web: [], api: [], db: [] }, gen: st.gen + 1 };
+    Object.values(pods).forEach((z) => z.replaceChildren());
+    Object.values(cards).forEach((c) => c.clear());
+    nsFrame.className = 'ib-ns ghost';
+  };
+  s.btn('↺ Reset', async () => {
+    resetAll();
+    term.replaceChildren();
+    s.say('Reset. Start with <code>kubectl apply -f shop/00-namespace.yaml</code>.');
+  });
+};

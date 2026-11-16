@@ -8,13 +8,15 @@ If it helps you, please ⭐ the repo so more people can find it. New to containe
 
 ## What's inside
 
-- **29 lessons** in three levels:
-  - **Beginner:** why Kubernetes, how a cluster works, kubectl and your first cluster, Pods, YAML manifests, labels and selectors, namespaces, ReplicaSets and self-healing
-  - **Intermediate:** Deployments and rolling updates, Services, DNS, Ingress and the Gateway API, ConfigMaps, Secrets, storage, probes, resources and QoS, Jobs and CronJobs, DaemonSets, StatefulSets
-  - **Advanced:** scheduling, autoscaling, RBAC, network policies, pod security, cluster operations, debugging, Helm and Kustomize, CRDs and operators
+- **33 lessons** in three levels:
+  - **Beginner:** containers in 5 minutes, why Kubernetes, how a cluster works, kubectl and your first cluster, Pods, YAML manifests, labels and selectors, namespaces, ReplicaSets and self-healing
+  - **Intermediate:** Deployments and rolling updates, how pod networking works, Services, DNS, Ingress and the Gateway API, ConfigMaps, Secrets, storage, probes, resources and QoS, Jobs and CronJobs, DaemonSets, StatefulSets, and a project that deploys a complete app
+  - **Advanced:** scheduling, autoscaling, RBAC, network policies, pod security, cluster operations, monitoring and logging, debugging, Helm and Kustomize, CRDs and operators
 - **Interactive animations** in every lesson: requests flowing through the control plane, rolling updates with surge sliders, traffic spreading over ready pods, the scheduler filtering and scoring nodes, drains blocked by a PodDisruptionBudget, an HPA reacting to load, and more. Every scene also has a small terminal that understands the real `kubectl` command.
 - **Command reference with 96 commands** (`#/commands`): every common `kubectl` and `helm` command with syntax, what happens inside the cluster, every important option, examples that build on each other, common errors, and a **live lab** on its own simulated cluster.
 - **Playground:** a simulated kind cluster (1 control-plane + 3 worker nodes) with 17 challenges and a live picture of nodes, pods, workloads and Services.
+- **Plain English first:** every lesson opens with an "In plain words" summary, uses an analogy, explains each term the first time it appears, lists its key terms and ends with common mistakes.
+- **Glossary** (`#/glossary`): 117 terms, each in one simple sentence and then in more detail, linked to the lesson that teaches it.
 - **Cheat sheet:** a searchable list of the commands you'll actually use.
 - **Quizzes** that mark a lesson complete. Progress is saved in your browser.
 

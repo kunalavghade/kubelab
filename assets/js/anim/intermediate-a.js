@@ -880,3 +880,133 @@ A.secretsFlow = (root) => {
   });
   renderEtcd();
 };
+
+// =====================================================================
+// Pod networking: one IP per pod, routes between nodes, new IPs on replacement
+// =====================================================================
+A.netPodToPod = (root) => {
+  const s = scene(root, {
+    title: 'Pod to pod across nodes',
+    hint: 'Send a packet on the same node, then across nodes. Then delete a pod and watch its replacement get a <b>new IP</b>.',
+  });
+  const NODES = {
+    'node-1': { ip: '172.18.0.3', cidr: '10.244.1.0/24', octet: 1 },
+    'node-2': { ip: '172.18.0.4', cidr: '10.244.2.0/24', octet: 2 },
+  };
+  const START = [['web', 'node-1', 5], ['api', 'node-1', 6], ['cache', 'node-2', 7], ['db', 'node-2', 8]];
+  let st = { pods: [], next: { 'node-1': 9, 'node-2': 9 }, overlay: true, busyPacket: false };
+
+  const nodes = Object.fromEntries(Object.entries(NODES).map(([name, n]) => [name, nodeBox(name, { capacity: `node IP ${n.ip} · podCIDR ${n.cidr}` })]));
+  const routes = Object.fromEntries(Object.entries(NODES).map(([name]) => {
+    const other = Object.entries(NODES).find(([o]) => o !== name)[1];
+    return [name, h('small', { class: 'ia-route' }, `route: ${other.cidr} → ${other.ip}`)];
+  }));
+  Object.entries(nodes).forEach(([name, n]) => n.el.insertBefore(routes[name], n.pods));
+  const wire = box('ia-wire', h('b', {}, '🔌 machine network'), h('small', {}, '172.18.0.0/16 — only knows node IPs'));
+  const modeSel = h('select', { 'aria-label': 'how packets cross nodes', onchange: () => { st.overlay = modeSel.value === 'overlay'; renderMode(); } },
+    h('option', { value: 'overlay', selected: true }, 'overlay (VXLAN)'), h('option', { value: 'native' }, 'native routing'));
+  const term = mkTerm({ height: '150px' });
+  s.stage.append(box('ia-net', nodes['node-1'].el, wire, nodes['node-2'].el), term);
+  s.add(h('label', { class: 'inline' }, 'Crossing nodes:', modeSel));
+  s.sep();
+
+  const live = () => st.pods.filter((p) => !p.gone);
+  const byName = (name) => live().find((p) => p.name === name || p.app === name);
+  const renderMode = () => wire.querySelector('small').replaceChildren(st.overlay ? 'overlay: pod packets travel wrapped in node-to-node packets' : 'native routing: the network knows each podCIDR');
+
+  const addPod = (app, node, last, status = 'ready') => {
+    const ip = `10.244.${NODES[node].octet}.${last}`;
+    const name = `${app}-${shortHash()}`;
+    const el = podEl(name, { status, ip, labels: { app } });
+    const pod = { app, name, node, ip, el, gone: false };
+    st.pods.push(pod);
+    nodes[node].pods.append(el);
+    return pod;
+  };
+  const reset = () => {
+    Object.values(nodes).forEach((n) => n.pods.replaceChildren());
+    st = { pods: [], next: { 'node-1': 9, 'node-2': 9 }, overlay: modeSel.value === 'overlay', busyPacket: false };
+    START.forEach(([app, node, last]) => addPod(app, node, last));
+    renderMode();
+    term.replaceChildren();
+    out(term, '<span class="dim"># every pod has its own IP from its node’s podCIDR</span>');
+  };
+
+  const send = async (fromApp, toApp) => {
+    const a = byName(fromApp), b = byName(toApp);
+    if (!a || !b) return s.say('One of those pods is gone. Press ↺ Reset.');
+    typed(term, `kubectl exec ${a.name} -- wget -qO- http://${b.ip}:8080`);
+    if (a.node === b.node) {
+      s.say(`<b>Same node.</b> The packet leaves <code>${a.ip}</code> through its virtual cable (veth) and the node hands it straight to <code>${b.ip}</code>. No routing between machines needed.`);
+      await fly(s.stage, a.el, nodes[a.node].el.querySelector('.k-node-head'), { label: `${a.ip} → ${b.ip}`, ms: 700 });
+      await fly(s.stage, nodes[a.node].el.querySelector('.k-node-head'), b.el, { label: `${a.ip} → ${b.ip}`, ms: 700 });
+    } else {
+      const route = routes[a.node];
+      s.say(`<b>Different nodes.</b> ${a.node} checks its routes: <code>${NODES[b.node].cidr}</code> lives on ${b.node} (<code>${NODES[b.node].ip}</code>).`);
+      await fly(s.stage, a.el, route, { label: `${a.ip} → ${b.ip}`, ms: 700 });
+      ping(route);
+      const onWire = st.overlay ? `[${NODES[a.node].ip} → ${NODES[b.node].ip}] ⟨${a.ip} → ${b.ip}⟩` : `${a.ip} → ${b.ip}`;
+      s.say(st.overlay
+        ? 'Overlay: the pod packet is <b>wrapped</b> inside a packet from node to node, because the machine network only knows node IPs. node-2 unwraps it.'
+        : 'Native routing: the packet keeps its pod addresses. The network (or cloud route table) knows which node owns each podCIDR.');
+      await fly(s.stage, route, wire, { label: onWire, ms: 900 });
+      ping(wire);
+      await fly(s.stage, wire, nodes[b.node].el.querySelector('.k-node-head'), { label: onWire, ms: 900 });
+      await fly(s.stage, nodes[b.node].el.querySelector('.k-node-head'), b.el, { label: `${a.ip} → ${b.ip}`, ms: 700 });
+    }
+    ping(b.el);
+    out(term, `<span class="ok">hello from ${escapeHtml(b.name)}</span>`);
+    s.say(`<b>${b.app}</b> sees the sender as <code>${a.ip}</code> — the real pod IP. Kubernetes forbids NAT between pods.`);
+  };
+
+  const getWide = () => {
+    typed(term, 'kubectl get pods -o wide');
+    out(term, `<span class="dim">${columns([['NAME', 'READY', 'STATUS', 'IP', 'NODE'], ...live().map((p) => [p.name, '1/1', 'Running', p.ip, p.node])])}</span>`);
+    s.say('Pods on the same node share the first three numbers of their IP: their node’s podCIDR.');
+  };
+  const getNodes = () => {
+    typed(term, 'kubectl get nodes -o wide');
+    out(term, `<span class="dim">${columns([['NAME', 'STATUS', 'INTERNAL-IP'], ...Object.entries(NODES).map(([n, x]) => [n, 'Ready', x.ip])])}</span>`);
+    s.say('Node IPs (<code>172.18…</code>) and pod IPs (<code>10.244…</code>) are separate networks.');
+  };
+
+  const replace = async (pod) => {
+    if (!pod) return;
+    typed(term, `kubectl delete pod ${pod.name}`);
+    pod.gone = true;
+    pod.el.setStatus('terminating');
+    out(term, `pod "${escapeHtml(pod.name)}" deleted`);
+    s.say(`<code>${pod.name}</code> (${pod.ip}) is going away. Its Deployment will create a replacement…`);
+    await wait(700);
+    pod.el.vanish();
+    const node = Object.keys(NODES).sort((x, y) => live().filter((p) => p.node === x).length - live().filter((p) => p.node === y).length)[0];
+    const fresh = addPod(pod.app, node, st.next[node]++, 'creating');
+    await wait(800);
+    fresh.el.setStatus('ready');
+    flash(fresh.el);
+    s.say(`The replacement <code>${fresh.name}</code> got a <b>new IP: ${fresh.ip}</b> (it was ${pod.ip}). Anything that remembered the old IP is now broken — that is why we use <b>Services</b>.`);
+  };
+  const victim = () => live().find((p) => p.app === 'db') || live()[0];
+
+  s.btn('📦 Same node: web → api', () => send('web', 'api'), { primary: true });
+  s.btn('🌐 Across nodes: web → db', () => send('web', 'db'), { primary: true });
+  s.sep();
+  s.btn('kubectl get pods -o wide', getWide, { cmd: /^kubectl get (?:po|pods?)(?: -o wide)?$/, example: 'kubectl get pods -o wide' });
+  s.btn('kubectl get nodes -o wide', getNodes, { cmd: /^kubectl get (?:no|nodes?)(?: -o wide)?$/, example: 'kubectl get nodes -o wide' });
+  const deleteTyped = async (m) => {
+    const pod = live().find((p) => p.name === m[1] || p.app === m[1]);
+    if (pod) return replace(pod);
+    typed(term, m.input);
+    out(term, `<span class="bad">Error from server (NotFound): pods "${escapeHtml(m[1])}" not found</span>`);
+    s.say('Copy a real pod name from <code>kubectl get pods -o wide</code>.');
+  };
+  s.btn('kubectl delete pod …', (_, m) => (m ? deleteTyped(m) : replace(victim())), {
+    cmd: /^kubectl delete (?:po|pods?) (\S+)$/,
+    example: () => `kubectl delete pod ${victim()?.name}`,
+    enabled: () => live().length > 0,
+    why: 'There are no pods left. Press ↺ Reset.',
+  });
+  s.sep();
+  s.btn('↺ Reset', reset);
+  reset();
+};

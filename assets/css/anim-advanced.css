@@ -121,3 +121,18 @@
 /* Grid tracks default to min-content; keep the scheduling columns inside narrow screens. */
 .adv-col { grid-template-columns: minmax(0, 1fr); }
 .adv-col > * { min-width: 0; }
+
+/* Monitoring & logging */
+.adv-obs-scene { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; margin-bottom: 12px; }
+.adv-obs-box { min-width: 0; }
+.adv-obs-agent { font-size: 11px; margin-top: 6px; }
+.adv-loglist { display: grid; gap: 2px; font: 11px var(--mono); max-height: 130px; overflow: hidden; }
+.adv-loglist > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adv-obs-bars { display: grid; gap: 6px; }
+.adv-membar { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.adv-membar small { font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adv-membar b { font: 600 11px var(--mono); }
+.adv-membar.adv-hot .bar i { background: var(--bad); }
+.adv-obs-alerts { min-height: 32px; }
+.adv-obs-firing { animation: glow 1s infinite; }
+@media (max-width: 900px) { .adv-obs-scene { grid-template-columns: minmax(0, 1fr); } }

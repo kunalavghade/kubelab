@@ -1,4 +1,4 @@
-// Intermediate lessons, part A: Deployments, Services, DNS, Ingress & Gateway API, ConfigMaps, Secrets.
+// Intermediate lessons, part A: Deployments, pod networking, Services, DNS, Ingress & Gateway API, ConfigMaps, Secrets.
 export const INTERMEDIATE_A = [
   // ======================= DEPLOYMENTS =======================
   {
@@ -6,6 +6,7 @@ export const INTERMEDIATE_A = [
     level: 'intermediate',
     title: 'Deployments & rolling updates',
     summary: 'Ship new versions with zero downtime, watch every step of a rollout, and undo a bad release in one command.',
+    plain: 'A <b>Deployment</b> is how you run an app on Kubernetes and keep it up to date. You tell it “run 4 copies of version 1”. When you change that to version 2, it swaps the copies one at a time, so users never see the app go down. If version 2 is broken, one command brings version 1 back. Almost every app on Kubernetes is shipped this way.',
     minutes: 14,
     learn: [
       'How a Deployment manages ReplicaSets, and ReplicaSets manage pods',
@@ -16,6 +17,16 @@ export const INTERMEDIATE_A = [
     blocks: [
       ['p', 'A ReplicaSet keeps <i>N</i> copies of one pod template running. That is great until you want to ship <b>version 2</b>. A ReplicaSet cannot change its template in place for running pods — it only uses the template when it creates new ones. Something has to create a <i>new</i> ReplicaSet for v2, grow it, and shrink the old one, carefully, so users never notice. That something is a <b>Deployment</b>.'],
       ['analogy', 'Think of a restaurant changing its menu during dinner service. You don’t close the kitchen, fire every cook and hire new ones. You bring in one new cook trained on the new menu, check they can cook, then send one old cook home — and repeat until the whole shift has switched. Customers keep getting food the whole time. That is a <b>rolling update</b>.'],
+      ['h3', 'Words to know'],
+      ['list', [
+        '<b>Pod</b> — the smallest thing Kubernetes runs: one or more containers that share an IP address.',
+        '<b>ReplicaSet</b> — a controller that keeps a fixed number of identical pods running.',
+        '<b>Pod template</b> — the blueprint inside a Deployment that says what each pod looks like: image, ports, environment.',
+        '<b>Revision</b> — one version of the pod template. Every change to the template creates a new revision.',
+        '<b>Rollout</b> — the process of replacing old pods with new ones.',
+        '<b>Ready / available</b> — a pod is Ready when its readiness check passes, and available once it has stayed Ready for <code>minReadySeconds</code>.',
+        '<b>Rollback</b> — going back to an earlier revision.',
+      ]],
       ['h', 'Three layers of ownership'],
       ['p', 'A Deployment never touches pods directly. It owns <b>ReplicaSets</b>, and each ReplicaSet owns <b>pods</b>. Every pod carries an <code>ownerReferences</code> entry pointing at its ReplicaSet, and every ReplicaSet points at its Deployment. Delete the Deployment and the garbage collector removes everything below it.'],
       ['list', [
@@ -138,6 +149,15 @@ export const INTERMEDIATE_A = [
         b: { title: 'Canary', items: ['Main Deployment web (v1, 9 pods) plus web-canary (v2, 1 pod)', 'Both carry app=web, so the Service sends ~10% of traffic to v2', 'Watch errors and latency, then grow the canary or delete it', 'Precise percentages need an Ingress/Gateway or a service mesh'] },
       }],
       ['tip', 'Plain Deployments give you rolling updates only. For automated canaries with metrics analysis look at <b>Argo Rollouts</b> or <b>Flagger</b>; for weighted routing see the Gateway API lesson.'],
+      ['h', 'Common mistakes'],
+      ['list', [
+        '<b>Using the <code>:latest</code> tag.</b> The template text doesn’t change when you push a new <code>latest</code>, so no rollout happens — and you can’t tell which version is running. Use explicit tags (<code>web:2.4.1</code>) or digests.',
+        '<b>No readiness probe.</b> New pods count as ready the moment they start. A broken version then replaces every good pod. Always add one.',
+        '<b>Changing the selector.</b> <code>spec.selector</code> is immutable. Changing it fails with <code>field is immutable</code>; create a new Deployment instead.',
+        '<b>Hot-fixing with <code>kubectl set image</code> and forgetting the YAML.</b> The next <code>kubectl apply</code> of the old file quietly rolls the fix back. Change the file (or Git) too.',
+        '<b>Expecting an automatic rollback.</b> <code>progressDeadlineSeconds</code> only marks the rollout as failed. You (or your pipeline) must run <code>kubectl rollout undo</code>.',
+        '<b>No resource requests and a tight cluster.</b> The extra surge pod may stay <code>Pending</code>, and the rollout stalls. Leave headroom or use <code>maxSurge: 0</code>.',
+      ]],
     ],
     quiz: [
       { q: 'A Deployment has <code>replicas: 10</code>, <code>maxSurge: 2</code>, <code>maxUnavailable: 1</code>. During a rolling update, what is the most pods that can exist?', options: ['10', '11', '12', '13'], answer: 2, why: 'Total pods may reach replicas + maxSurge = 10 + 2 = 12.' },
@@ -148,12 +168,187 @@ export const INTERMEDIATE_A = [
     ],
   },
 
+  // ======================= POD NETWORKING =======================
+  {
+    id: 'pod-networking',
+    level: 'intermediate',
+    title: 'How pods talk: the cluster network',
+    summary: 'Every pod gets its own IP and can reach every other pod directly, on any node. See how the network plugin makes that work — and why pod IPs keep changing.',
+    plain: 'Every pod in Kubernetes gets its own IP address, like a small computer on a network. Any pod can talk to any other pod using that address, even when they run on different machines. A <b>network plugin</b> (CNI) hands out the addresses and carries the traffic between machines. But when a pod is replaced, the new one gets a <b>new</b> address. That is why the next lesson, Services, exists.',
+    minutes: 12,
+    learn: [
+      'The Kubernetes network model: one IP per pod, no NAT between pods',
+      'How the CNI plugin assigns pod IPs from each node’s range',
+      'How a packet travels from a pod on one node to a pod on another',
+      'Why pod IPs change, and the difference between node, pod and Service IPs',
+    ],
+    blocks: [
+      ['p', 'With plain Docker on one machine, containers hide behind the host’s IP and you map ports by hand (<code>-p 8080:80</code>). Across 50 machines that falls apart: who owns port 8080 on which machine? Kubernetes avoids the whole problem with one simple rule: <b>every pod gets its own real IP address</b>.'],
+      ['analogy', 'Think of a big office building. Each floor is a <b>node</b>, with its own range of desk numbers (floor 1 has desks 1.1–1.254, floor 2 has 2.1–2.254). Every employee — a <b>pod</b> — gets their own desk number and phone extension, and can call anyone in the building directly. The building’s phone system (the <b>CNI plugin</b>) knows which floor each number is on and routes the call. When someone leaves and a replacement joins, the replacement gets a new desk number.'],
+      ['h3', 'Words to know'],
+      ['list', [
+        '<b>IP address</b> — a number like <code>10.244.1.5</code> that identifies one machine (or pod) on a network.',
+        '<b>Node IP</b> — the address of the machine itself, such as <code>172.18.0.3</code>.',
+        '<b>Pod IP</b> — the address of one pod, such as <code>10.244.1.5</code>. It lives only as long as the pod.',
+        '<b>podCIDR</b> — the block of pod IPs a node hands out, such as <code>10.244.1.0/24</code> (256 addresses).',
+        '<b>NAT</b> (network address translation) — rewriting addresses on the way, so the receiver sees a different sender. Kubernetes forbids it between pods.',
+        '<b>CNI plugin</b> — the Container Network Interface plugin: the software that wires up pod networking (Calico, Cilium, Flannel, a cloud provider’s plugin…).',
+        '<b>Overlay</b> — wrapping a pod-to-pod packet inside a node-to-node packet so it can cross a network that doesn’t know pod IPs.',
+      ]],
+      ['h', 'The Kubernetes network model'],
+      ['p', 'Kubernetes doesn’t ship a network itself. It sets rules, and any network plugin must follow them:'],
+      ['list', [
+        '<b>Every pod gets its own IP address.</b> Containers never share a node’s IP and never fight over ports.',
+        '<b>Every pod can reach every other pod</b> on any node, using that IP, <b>without NAT</b>. The receiver sees the sender’s real pod IP.',
+        '<b>Agents on a node</b> (like the kubelet) can reach every pod on that node.',
+        '<b>Containers inside one pod share the IP.</b> They talk to each other over <code>localhost</code>, so two containers in a pod can’t both listen on port 80.',
+      ]],
+      ['p', 'The result: from your app’s point of view, the cluster looks like one big flat network. A pod on node-1 calls <code>10.244.2.8:5432</code> and reaches the database pod on node-2, as if they were plugged into the same switch.'],
+      ['h', 'Where pod IPs come from'],
+      ['p', 'When a node joins the cluster, it is given a <b>podCIDR</b> — its own slice of the cluster’s pod network. With a cluster pod range of <code>10.244.0.0/16</code>, node-1 might get <code>10.244.1.0/24</code> and node-2 <code>10.244.2.0/24</code>. Some plugins manage the slices themselves, but the idea is the same.'],
+      ['p', 'When the kubelet starts a pod, it asks the container runtime to create the pod’s network namespace, and the runtime calls the <b>CNI plugin</b>. The plugin:'],
+      ['list', [
+        'creates a virtual network cable (a <b>veth pair</b>): one end becomes <code>eth0</code> inside the pod, the other stays on the node;',
+        'picks a free IP from the node’s podCIDR and gives it to the pod;',
+        'adds routes, so the node knows how to reach this pod and how to reach every other node’s pods.',
+      ]],
+      ['cmd', {
+        title: 'See every pod’s IP and node',
+        parts: [
+          ['kubectl', 'The Kubernetes CLI.'],
+          ['get pods', 'List pods.'],
+          [
+            '-o wide',
+            'Add the <b>IP</b> and <b>NODE</b> columns. Pods on the same node share the first three numbers of their IP (their node’s podCIDR).',
+          ],
+        ],
+        try: true,
+      }],
+      ['cmd', {
+        title: 'See the nodes’ own IPs',
+        parts: [
+          ['kubectl', 'The Kubernetes CLI.'],
+          ['get nodes', 'List the nodes.'],
+          [
+            '-o wide',
+            'Add <b>INTERNAL-IP</b>: the node’s address on the machine network. Compare it with the pod IPs — they are different networks.',
+          ],
+        ],
+        try: true,
+      }],
+      ['anim', 'netPodToPod'],
+      ['h', 'How a packet crosses nodes'],
+      ['p', 'Pod <code>web</code> on node-1 (<code>10.244.1.5</code>) sends a request to pod <code>db</code> on node-2 (<code>10.244.2.8</code>):'],
+      ['list', [
+        '<b>1.</b> The packet leaves the pod through its <code>eth0</code> and comes out of the veth end on node-1.',
+        '<b>2.</b> node-1 looks at its routes: “<code>10.244.2.0/24</code> lives on node-2 (<code>172.18.0.4</code>)”.',
+        '<b>3.</b> The packet crosses the machine network to node-2 — either as it is, or wrapped (see below).',
+        '<b>4.</b> node-2 sees <code>10.244.2.8</code> is one of its own pods and hands the packet down that pod’s veth.',
+        '<b>5.</b> <code>db</code> receives it with the sender still set to <code>10.244.1.5</code>. No NAT happened.',
+      ]],
+      ['compare', {
+        a: {
+          title: 'Overlay (encapsulation)',
+          items: [
+            'The pod packet is wrapped inside a node-to-node packet (VXLAN, Geneve, IP-in-IP)',
+            'The machine network only ever sees node IPs',
+            'Works on almost any network, cloud or office',
+            'Small overhead: extra bytes per packet and a little CPU',
+          ],
+        },
+        b: {
+          title: 'Native routing',
+          items: [
+            'Packets travel with their real pod IPs',
+            'The network (or cloud route tables, or BGP) must know where each podCIDR lives',
+            'Faster and easier to trace',
+            'Needs network setup — common in clouds whose plugins give pods VPC IPs',
+          ],
+        },
+      }],
+      ['table', {
+        head: ['Plugin', 'Known for'],
+        rows: [
+          ['<b>Flannel</b>', 'Simple overlay (VXLAN); no NetworkPolicy support on its own'],
+          ['<b>Calico</b>', 'Native routing with BGP or an overlay; full NetworkPolicy support'],
+          ['<b>Cilium</b>', 'eBPF-based; can replace kube-proxy, rich policies and observability'],
+          [
+            '<b>Cloud plugins</b> (AWS VPC CNI, Azure CNI, GKE)',
+            'Give pods real IPs from the cloud network itself',
+          ],
+        ],
+      }],
+      ['h', 'Why pod IPs keep changing'],
+      ['p', 'A pod’s IP belongs to that pod only. When a Deployment replaces it — a rollout, a crash, a drained node — the new pod gets a <b>new</b> IP, possibly on another node with a different podCIDR. Try it in the scene above: delete a pod and watch its replacement appear with a different address.'],
+      ['p', 'So if your frontend stored the backend’s pod IPs, it would break on every deploy. You need something stable in front of the changing pods: a <b>Service</b>, with one fixed virtual IP and a DNS name. On every node, <b>kube-proxy</b> (or a plugin like Cilium) watches Services and quietly rewrites packets sent to that fixed IP so they go to a current pod IP. That is the next lesson.'],
+      ['table', {
+        head: ['Address', 'Example', 'Who has it', 'Lives as long as', 'Reachable from'],
+        rows: [
+          [
+            '<b>Node IP</b>',
+            '<code>172.18.0.3</code>',
+            'A machine',
+            'The machine',
+            'The machine network (and the internet, if public)',
+          ],
+          [
+            '<b>Pod IP</b>',
+            '<code>10.244.1.5</code>',
+            'One pod',
+            'That pod — a replacement gets a new one',
+            'Inside the cluster',
+          ],
+          [
+            '<b>Service IP</b> (ClusterIP)',
+            '<code>10.96.12.40</code>',
+            'A Service (virtual, owned by no machine)',
+            'The Service — it never changes',
+            'Inside the cluster',
+          ],
+        ],
+      }],
+      ['cmd', {
+        title: 'Talk to another pod directly by IP (for testing only)',
+        parts: [
+          ['kubectl', 'The Kubernetes CLI.'],
+          ['exec', 'Run a command inside an existing container.'],
+          [
+            'client',
+            'A pod with <code>wget</code> in it, for example <code>kubectl run client --image=busybox:1.37 -- sleep 3600</code>.',
+          ],
+          ['--', 'Everything after this runs inside the container.'],
+          [
+            'wget -qO- http://10.244.2.8:8080',
+            'Fetch a page straight from another pod’s IP. Copy a real IP from <code>kubectl get pods -o wide</code>. It works across nodes — but the IP will be stale after the next deploy.',
+          ],
+        ],
+      }],
+      ['tip', 'Pods can also be restricted: by default every pod can reach every pod, but <b>NetworkPolicies</b> (an advanced lesson) let you allow only the traffic you want — if your CNI plugin enforces them.'],
+      ['h', 'Common mistakes'],
+      ['list', [
+        '<b>Hard-coding pod IPs</b> in config. They change on every restart. Use a Service name.',
+        '<b>Running two containers in one pod on the same port.</b> They share one IP, so the second fails with “address already in use”.',
+        '<b>Overlapping ranges.</b> If the pod or Service range overlaps your office or VPC network, some addresses become unreachable. Plan the CIDRs before creating the cluster.',
+        '<b>Expecting pod IPs to work from your laptop.</b> Pod IPs are usually internal to the cluster. Use <code>kubectl port-forward</code>, a NodePort, a LoadBalancer or an Ingress.',
+        '<b>Assuming NetworkPolicies work everywhere.</b> Some plugins (Flannel alone) ignore them silently.',
+      ]],
+    ],
+    quiz: [
+      { q: 'Two containers in the same pod need to talk. How do they reach each other?', options: ['Through a Service', 'Over localhost, because they share the pod’s IP', 'Through the node IP', 'They cannot'], answer: 1, why: 'Containers in a pod share one network namespace, so localhost reaches the other container.' },
+      { q: 'Pod A on node-1 sends to pod B on node-2. What source IP does pod B see?', options: ['node-1’s IP', 'The Service IP', 'Pod A’s own pod IP', '127.0.0.1'], answer: 2, why: 'The Kubernetes network model forbids NAT between pods, so B sees A’s real IP.' },
+      { q: 'Which component assigns a new pod its IP address?', options: ['The scheduler', 'kube-proxy', 'The CNI plugin, called by the container runtime', 'CoreDNS'], answer: 2, why: 'The kubelet asks the runtime to create the pod sandbox, and the runtime calls the CNI plugin, which picks an IP from the node’s range.' },
+      { q: 'A pod is deleted and its Deployment creates a replacement. What about the IP?', options: ['The replacement keeps the same IP', 'The replacement usually gets a new IP', 'The IP moves to the Service', 'Pods have no IPs'], answer: 1, why: 'Pod IPs belong to one pod. That is exactly why Services provide a stable address.' },
+      { q: 'What does an overlay network do?', options: ['Encrypts all traffic', 'Wraps pod packets inside node-to-node packets so any network can carry them', 'Gives every pod a public IP', 'Replaces DNS'], answer: 1, why: 'Encapsulation (VXLAN, Geneve, IP-in-IP) hides pod IPs from the underlying network.' },
+    ],
+  },
+
   // ======================= SERVICES =======================
   {
     id: 'services',
     level: 'intermediate',
     title: 'Services: stable networking for pods',
     summary: 'Pods come and go and change IPs. A Service gives them one stable name and IP, and load-balances across the healthy ones.',
+    plain: 'Pods get a new IP address every time they are replaced, so other apps can’t rely on those addresses. A <b>Service</b> is a fixed address and name in front of a group of pods. It forwards each connection to one of the healthy pods. Your frontend talks to “api”, never to a pod directly. Without Services, every deploy would break the apps that talk to each other.',
     minutes: 15,
     learn: [
       'Why you never talk to pod IPs directly',
@@ -165,6 +360,15 @@ export const INTERMEDIATE_A = [
       ['p', 'Every pod gets its own IP address. But pods are <b>cattle, not pets</b>: a rolling update, a crash, a drained node — and the pod is replaced by a new one with a <b>new IP</b>. If your frontend had the backend’s pod IPs hard-coded, it would break on every deploy.'],
       ['p', 'A <b>Service</b> solves this. It is a stable virtual IP (the <b>ClusterIP</b>) and a DNS name that never change for the life of the Service. Behind it, Kubernetes keeps an always-current list of the pods that should receive traffic, and spreads connections across them.'],
       ['analogy', 'A Service is a company’s main phone number. Employees (pods) join, leave and change desks every day, but customers always call the same number. The switchboard (kube-proxy) forwards each call to someone who is at their desk and ready to answer.'],
+      ['h3', 'Words to know'],
+      ['list', [
+        '<b>ClusterIP</b> — the Service’s fixed virtual IP address inside the cluster.',
+        '<b>Selector</b> — the labels a Service uses to find its pods, such as <code>app=web</code>.',
+        '<b>Endpoint / EndpointSlice</b> — the live list of pod IPs and ports behind a Service.',
+        '<b>kube-proxy</b> — a program on every node that turns “send to the ClusterIP” into “send to one of these pods”.',
+        '<b>port / targetPort / nodePort</b> — the port clients use, the port the pod listens on, and the port opened on every node.',
+        '<b>Layer 4</b> — works with IP addresses and ports only; it never reads the HTTP request.',
+      ]],
       ['h', 'How a Service finds its pods'],
       ['list', [
         'The Service has a <b>selector</b>, for example <code>app: web</code>.',
@@ -244,6 +448,24 @@ export const INTERMEDIATE_A = [
       }],
       ['warn', '<code>kubectl create service</code> also exists (<code>kubectl create service clusterip web --tcp=80:8080</code>), but it sets the selector to <code>app=web</code> from the name. Double-check it matches your pod labels.'],
       ['tip', 'Services are layer 4 (TCP/UDP): they do not look at HTTP hosts or paths, terminate TLS or retry requests. For HTTP routing you add an <b>Ingress</b> or <b>Gateway</b> on top — that’s two lessons from now.'],
+      ['h', 'Follow one request, step by step'],
+      ['list', [
+        '<b>1. Find the address.</b> The app calls <code>http://web/</code>. DNS answers with the ClusterIP, say <code>10.96.12.40</code>.',
+        '<b>2. Send.</b> The pod sends a packet to <code>10.96.12.40:80</code>. Nothing actually owns that IP.',
+        '<b>3. Rewrite.</b> The Linux kernel on the sending node matches a kube-proxy rule, picks one Ready pod — say <code>10.244.2.7:8080</code> — and rewrites the packet’s destination (DNAT).',
+        '<b>4. Deliver.</b> The cluster network carries the packet to that pod, even if it is on another node.',
+        '<b>5. Reply.</b> The kernel remembers the rewrite (connection tracking), so the reply looks like it came from <code>10.96.12.40</code>. The app never sees the pod IP.',
+        '<b>6. Next connection.</b> A new connection may go to a different pod. Balancing happens <b>per connection</b>, not per HTTP request.',
+      ]],
+      ['warn', 'Because balancing is per connection, long-lived connections (HTTP keep-alive, gRPC, database pools) can stick to one pod while new pods sit idle. Use client-side balancing with a headless Service, or a service mesh / Gateway that balances per request.'],
+      ['h', 'Common mistakes'],
+      ['list', [
+        '<b>Selector doesn’t match the pod labels.</b> A typo (<code>app: Web</code> vs <code>app: web</code>) gives a Service with zero endpoints. Compare <code>kubectl get pods --show-labels</code> with the selector.',
+        '<b>Wrong targetPort.</b> The app listens on 8080 but the Service targets 80: you get “connection refused”. targetPort must be the port <i>inside</i> the pod.',
+        '<b>Expecting <code>ping</code> to work.</b> The ClusterIP is only a forwarding rule, so ICMP gets no answer. Test with <code>curl</code> or <code>nc</code> instead.',
+        '<b>Selecting pods in another namespace.</b> A selector only looks in the Service’s own namespace. To reach another namespace, call that namespace’s Service by name.',
+        '<b>A LoadBalancer for every internal app.</b> Internal traffic only needs ClusterIP. Expose to the outside through one Ingress or Gateway.',
+      ]],
     ],
     quiz: [
       { q: 'Your Service exists but connections hang and <code>kubectl get endpointslices</code> shows no endpoints. Most likely cause?', options: ['kube-proxy is not installed', 'The selector matches no Ready pods', 'The Service type is wrong', 'DNS is broken'], answer: 1, why: 'No endpoints means no Ready pod matches the selector — check labels and readiness.' },
@@ -260,6 +482,7 @@ export const INTERMEDIATE_A = [
     level: 'intermediate',
     title: 'DNS & service discovery',
     summary: 'How a pod finds “web” or “db.payments” by name: CoreDNS, search domains, headless Services and per-pod names.',
+    plain: 'Inside a cluster, apps find each other by <b>name</b>, just like websites on the internet. Every Service gets a name such as <code>web</code> or <code>web.shop</code>. A DNS server inside the cluster, <b>CoreDNS</b>, turns that name into the Service’s IP address. Your code says “connect to web” and DNS fills in the address, even after it changes. Without it you would hard-code IP addresses that break all the time.',
     minutes: 12,
     learn: [
       'The DNS names every Service and pod gets',
@@ -269,6 +492,18 @@ export const INTERMEDIATE_A = [
     ],
     blocks: [
       ['p', 'Services give you stable IPs, but nobody wants to configure <code>10.96.12.40</code>. Every cluster runs a DNS server — almost always <b>CoreDNS</b>, in <code>kube-system</code> behind a Service usually named <code>kube-dns</code>. It watches the API server and answers queries for every Service and many pods, so your code just connects to <code>http://web</code>.'],
+      ['analogy', 'DNS is your phone’s contacts app. You tap “Mum”, not her number. If she changes numbers, the contact is updated once and every call still works. CoreDNS is the cluster’s contacts app — and Kubernetes updates the contacts for you every time a Service is created, changed or deleted.'],
+      ['h3', 'Words to know'],
+      ['list', [
+        '<b>DNS</b> — the system that turns names into IP addresses.',
+        '<b>CoreDNS</b> — the DNS server that runs inside the cluster, in <code>kube-system</code>.',
+        '<b>A record</b> — a DNS answer that says “this name has this IPv4 address”.',
+        '<b>FQDN</b> (fully qualified domain name) — the complete name, like <code>web.shop.svc.cluster.local</code>.',
+        '<b>Search list</b> — endings the resolver adds to short names, one after another, until one works.',
+        '<b>ndots</b> — “if a name has fewer than this many dots, try the search list first”.',
+        '<b>NXDOMAIN</b> — DNS’s answer for “no such name”.',
+        '<b>Headless Service</b> — a Service without a ClusterIP, whose DNS name returns the pod IPs themselves.',
+      ]],
       ['h', 'The names a Service gets'],
       ['table', {
         head: ['Name', 'Works from', 'Example'],
@@ -352,6 +587,83 @@ export const INTERMEDIATE_A = [
       ['h', 'The old way: environment variables'],
       ['p', 'When a pod starts, the kubelet also injects variables for every Service that already exists in its namespace, like <code>WEB_SERVICE_HOST=10.96.12.40</code> and <code>WEB_SERVICE_PORT=80</code>. They are frozen at start time and missing for Services created later, so prefer DNS. Large namespaces can turn this off with <code>enableServiceLinks: false</code>.'],
       ['warn', 'Pods also get names from their IP (<code>10-244-1-7.shop.pod.cluster.local</code>), but those names change with the IP — never put them in config.'],
+      ['h', 'What happens when a pod looks up a name'],
+      ['list', [
+        '<b>1.</b> Your app asks the operating system for <code>web</code> (for example with <code>getaddrinfo</code>).',
+        '<b>2.</b> The resolver reads <code>/etc/resolv.conf</code>. <code>web</code> has 0 dots, fewer than <code>ndots:5</code>, so it tries the search list first.',
+        '<b>3.</b> It sends a query for <code>web.shop.svc.cluster.local</code> over UDP port 53 to <code>10.96.0.10</code> — the ClusterIP of the <code>kube-dns</code> Service.',
+        '<b>4.</b> kube-proxy forwards that query to one of the CoreDNS pods, like any other Service traffic.',
+        '<b>5.</b> CoreDNS’s <code>kubernetes</code> plugin already knows every Service, because it watches the API server. It answers with the ClusterIP and a short TTL (30 seconds).',
+        '<b>6.</b> The app connects to the ClusterIP, and the Service delivers the connection to a pod.',
+      ]],
+      ['table', {
+        head: ['A pod in namespace shop looks up…', 'Names tried, in order', 'Result'],
+        rows: [
+          ['<code>web</code>', '<code>web.shop.svc.cluster.local</code>', 'Found on the first try'],
+          [
+            '<code>api.payments</code>',
+            '<code>api.payments.shop.svc…</code> ✗, then <code>api.payments.svc.cluster.local</code> ✓',
+            'Found on the second try',
+          ],
+          [
+            '<code>google.com</code>',
+            '3 search endings ✗, then <code>google.com</code> ✓',
+            '4 queries for one name',
+          ],
+          [
+            '<code>google.com.</code> (trailing dot)',
+            '<code>google.com</code> only',
+            'One query: the dot means “already complete”',
+          ],
+        ],
+      }],
+      ['h', 'Who answers: the CoreDNS config'],
+      ['p', 'CoreDNS reads its config, the <b>Corefile</b>, from a ConfigMap. Read it with <code>kubectl -n kube-system get configmap coredns -o yaml</code>. Each line turns on a plugin:'],
+      ['file', {
+        name: 'Corefile (ConfigMap coredns in kube-system)',
+        lang: 'text',
+        lines: [
+          ['.:53 {', 'Answer every DNS zone (<code>.</code>) on port 53.'],
+          ['    errors', 'Log errors.'],
+          ['    health', 'Liveness endpoint used by the CoreDNS pod’s probe.'],
+          [
+            '    ready',
+            'Readiness endpoint: CoreDNS only gets traffic once it has synced with the API server.',
+          ],
+          [
+            '    kubernetes cluster.local in-addr.arpa ip6.arpa {',
+            'The plugin that answers for Services and pods in the <code>cluster.local</code> domain, plus reverse lookups.',
+          ],
+          ['       pods insecure', 'Answer the IP-based pod names (<code>10-244-1-7.shop.pod…</code>).'],
+          ['       ttl 30', 'Answers may be cached for 30 seconds.'],
+          ['    }', ''],
+          [
+            '    forward . /etc/resolv.conf',
+            'Anything outside the cluster (like <code>google.com</code>) is forwarded to the node’s own DNS servers.',
+          ],
+          [
+            '    cache 30',
+            'Cache answers for 30 seconds to take load off the API server and upstream DNS.',
+          ],
+          [
+            '    loop',
+            'Stop if a forwarding loop is detected (a classic cause of CoreDNS CrashLoopBackOff).',
+          ],
+          ['    reload', 'Pick up Corefile changes without a restart.'],
+          ['    loadbalance', 'Shuffle the order of multiple A records, such as headless Service answers.'],
+          ['}', ''],
+        ],
+      }],
+      ['p', 'Every pod also has a <code>dnsPolicy</code>. The default, <code>ClusterFirst</code>, uses CoreDNS as shown. <code>Default</code> uses the node’s DNS instead. <code>None</code> with a <code>dnsConfig</code> block lets you set the nameservers, search list and options yourself.'],
+      ['tip', 'Busy clusters often run <b>NodeLocal DNSCache</b>: a small DNS cache on every node, so most lookups never leave the node. It cuts latency and avoids lost UDP packets under heavy load.'],
+      ['h', 'Common mistakes'],
+      ['list', [
+        '<b>Using the short name across namespaces.</b> <code>web</code> only searches your own namespace first. Use <code>web.shop</code>.',
+        '<b>Hard-coding <code>cluster.local</code>.</b> Some clusters use another domain. <code>name.namespace</code> works everywhere.',
+        '<b>Expecting DNS to balance a normal Service.</b> DNS returns one ClusterIP; the balancing happens later, in kube-proxy.',
+        '<b>Apps that cache DNS forever.</b> Some runtimes (older Java settings, for example) never re-resolve names. With headless Services, they keep using pods that are long gone.',
+        '<b>A NetworkPolicy that blocks port 53.</b> A default-deny egress policy also blocks DNS: every lookup times out. Allow UDP and TCP 53 to <code>kube-dns</code>.',
+      ]],
     ],
     quiz: [
       { q: 'A pod in namespace <code>shop</code> wants Service <code>api</code> in namespace <code>payments</code>. Which name works?', options: ['api', 'api.payments', 'payments.api', 'api.shop'], answer: 1, why: '<code>&lt;service&gt;.&lt;namespace&gt;</code> works across namespaces; the short name only searches your own namespace first.' },
@@ -367,6 +679,7 @@ export const INTERMEDIATE_A = [
     level: 'intermediate',
     title: 'Ingress & the Gateway API',
     summary: 'Route HTTP(S) traffic from outside by host name and path to the right Service, terminate TLS, and split traffic for canaries.',
+    plain: 'An <b>Ingress</b> is the front door for web traffic coming into your cluster. It reads each request’s website name and path — like <code>shop.example.com/api</code> — and sends it to the right Service. One entry point can serve many apps and handle HTTPS for all of them. A separate program, the <b>ingress controller</b>, does the actual work. The <b>Gateway API</b> is the newer, more powerful way to do the same job.',
     minutes: 15,
     learn: [
       'Why one LoadBalancer per Service doesn’t scale, and what layer 7 routing adds',
@@ -381,6 +694,15 @@ export const INTERMEDIATE_A = [
         b: { title: 'Layer 7 — Ingress / Gateway', items: ['Reads the HTTP host, path and headers', 'One entry point for many Services', 'Terminates TLS with your certificate', 'Can redirect, rewrite and split traffic'] },
       }],
       ['analogy', 'A Service is an office’s front door. An Ingress is the receptionist in the lobby of a whole building: they read the name on each visitor’s letter (host) and the department (path) and send them to the right floor.'],
+      ['h3', 'Words to know'],
+      ['list', [
+        '<b>Layer 7</b> — routing that reads the HTTP request itself: host name, path and headers.',
+        '<b>Reverse proxy</b> — a server that receives requests and passes them on to the right backend.',
+        '<b>Ingress controller</b> — the reverse proxy that reads Ingress objects and does the routing (ingress-nginx, Traefik, a cloud load balancer…).',
+        '<b>IngressClass</b> — names a controller; an Ingress picks one with <code>ingressClassName</code>.',
+        '<b>Host header</b> — the website name the browser asked for, sent with every HTTP request.',
+        '<b>TLS termination</b> — decrypting HTTPS at the entry point, using your certificate.',
+      ]],
       ['h', 'Ingress = rules + a controller'],
       ['p', 'An <b>Ingress</b> object is only a set of routing rules. Nothing happens until an <b>ingress controller</b> is running in the cluster: a reverse proxy (ingress-nginx, Traefik, HAProxy, Contour, a cloud provider’s controller…) that watches Ingress objects and configures itself from them. The controller itself is exposed with one LoadBalancer or NodePort Service — that is the single entry point for everything.'],
       ['warn', 'Kubernetes ships <b>no</b> ingress controller. If you apply an Ingress and nothing happens and <code>ADDRESS</code> stays empty in <code>kubectl get ingress</code>, you probably haven’t installed one, or your <code>ingressClassName</code> doesn’t match it.'],
@@ -487,6 +809,68 @@ export const INTERMEDIATE_A = [
         ],
       }],
       ['tip', 'New project? Use the Gateway API if your controller supports it. Existing Ingresses keep working — Ingress is not going away — but new features land in the Gateway API. Note that the community <b>ingress-nginx</b> project has announced its retirement, so check the status of whichever controller you pick.'],
+      ['h', 'Follow one request from the internet'],
+      ['list', [
+        '<b>1.</b> A browser looks up <code>shop.example.com</code> in public DNS and gets the IP of the controller’s cloud load balancer.',
+        '<b>2.</b> The load balancer sends the connection to a node, which forwards it to an ingress controller pod (through its LoadBalancer/NodePort Service).',
+        '<b>3.</b> The controller decrypts HTTPS with the certificate from the TLS Secret.',
+        '<b>4.</b> It reads the <code>Host</code> header and the path, and finds the matching rule: <code>/api</code> → Service <code>api</code>.',
+        '<b>5.</b> Most controllers then send the request straight to one of the Service’s pod IPs, read from its EndpointSlices — skipping the ClusterIP for better balancing.',
+        '<b>6.</b> The pod answers; the controller passes the response back to the browser.',
+      ]],
+      ['table', {
+        head: ['Request', 'Rules: <code>/api</code> Prefix and <code>/</code> Prefix', 'Why'],
+        rows: [
+          ['<code>/api</code>', 'Service <code>api</code>', 'Exact segment match'],
+          [
+            '<code>/api/orders/7</code>',
+            'Service <code>api</code>',
+            'Starts with the segment <code>/api</code>; the longest match wins',
+          ],
+          [
+            '<code>/apis</code>',
+            'Service <code>web</code>',
+            '<code>apis</code> is a different segment, so only <code>/</code> matches',
+          ],
+          ['<code>/</code>', 'Service <code>web</code>', 'Everything falls back to <code>/</code>'],
+          [
+            'Host <code>admin.example.com</code>',
+            '404 from the controller',
+            'No rule has that host and there is no default backend',
+          ],
+        ],
+      }],
+      ['h', 'Automatic HTTPS with cert-manager'],
+      ['p', 'Most teams don’t create TLS Secrets by hand. <b>cert-manager</b> watches Ingresses, gets certificates from Let’s Encrypt (or your own CA), stores them in the Secret you named, and renews them before they expire. You only add one annotation:'],
+      ['file', {
+        name: 'ingress.yaml (with cert-manager)',
+        lang: 'yaml',
+        lines: [
+          ['metadata:', ''],
+          ['  name: shop', ''],
+          ['  annotations:', ''],
+          [
+            '    cert-manager.io/cluster-issuer: letsencrypt',
+            'Ask the ClusterIssuer <code>letsencrypt</code> (installed once by the platform team) for a certificate.',
+          ],
+          ['spec:', ''],
+          ['  ingressClassName: nginx', ''],
+          ['  tls:', ''],
+          ['    - hosts: [shop.example.com]', 'The names the certificate must cover.'],
+          [
+            '      secretName: shop-tls',
+            'cert-manager creates and renews this Secret; the controller serves it.',
+          ],
+        ],
+      }],
+      ['h', 'Common mistakes'],
+      ['list', [
+        '<b>No ingress controller installed</b>, or an <code>ingressClassName</code> that matches none: nothing happens and ADDRESS stays empty.',
+        '<b>Service or TLS Secret in another namespace.</b> An Ingress can only use Services and Secrets in its own namespace.',
+        '<b>Forgetting public DNS.</b> The Ingress routes by host name, but someone still has to point <code>shop.example.com</code> at the load balancer’s IP.',
+        '<b>Prefix surprises.</b> <code>/api</code> doesn’t match <code>/apis</code>, and some apps break when the prefix isn’t stripped. Path rewriting is controller-specific (annotations) or an HTTPRoute filter.',
+        '<b>Copying annotations between controllers.</b> <code>nginx.ingress.kubernetes.io/*</code> annotations do nothing on Traefik or a cloud controller.',
+      ]],
     ],
     quiz: [
       { q: 'You applied an Ingress but <code>kubectl get ingress</code> shows no ADDRESS and nothing routes. Most likely?', options: ['The Service has no ClusterIP', 'No ingress controller (or a non-matching ingressClassName)', 'pathType is missing', 'DNS is broken'], answer: 1, why: 'Ingress objects are just rules; a controller must implement them.' },
@@ -503,6 +887,7 @@ export const INTERMEDIATE_A = [
     level: 'intermediate',
     title: 'ConfigMaps',
     summary: 'Keep configuration out of your images: feed settings to pods as environment variables or files, and know exactly when changes reach them.',
+    plain: 'A <b>ConfigMap</b> holds settings for your app — a log level, a feature switch or a whole config file — outside the container image. Pods read those settings as environment variables or as files. That way one image works in dev, test and production, each with its own ConfigMap. Changing a setting doesn’t need a new image, just a new ConfigMap (and sometimes a restart).',
     minutes: 12,
     learn: [
       'Why config belongs outside the image',
@@ -513,6 +898,15 @@ export const INTERMEDIATE_A = [
     blocks: [
       ['p', 'The same image should run in dev, staging and production. What differs — log level, feature flags, URLs, an nginx.conf — is <b>configuration</b>. Baking it into the image means one rebuild per environment and per change. A <b>ConfigMap</b> stores non-secret key/value data in the cluster so pods can read it at run time.'],
       ['analogy', 'The image is a coffee machine; the ConfigMap is the settings card taped to it — “large cup, extra shot”. Every café uses the same machine model with a different card.'],
+      ['h3', 'Words to know'],
+      ['list', [
+        '<b>Configuration</b> — settings that change between environments, but not the code.',
+        '<b>Key/value</b> — a name and its text value, like <code>LOG_LEVEL=info</code>.',
+        '<b>Environment variable</b> — a named value a program reads when it starts.',
+        '<b>Volume / mount</b> — a folder that Kubernetes places inside the container; a ConfigMap volume shows each key as a file.',
+        '<b>Immutable</b> — cannot be changed after creation.',
+        '<b>Rollout restart</b> — <code>kubectl rollout restart</code>: replace every pod, one by one, so they start with fresh settings.',
+      ]],
       ['h', 'Create one'],
       ['cmd', {
         title: 'From literal values',
@@ -601,6 +995,46 @@ export const INTERMEDIATE_A = [
       }],
       ['warn', 'ConfigMaps are <b>not</b> secret: anyone who can read them in the namespace sees the values in plain text. Passwords, tokens and keys go in Secrets — next lesson.'],
       ['p', 'A pod that references a ConfigMap that doesn’t exist won’t start: it shows <code>CreateContainerConfigError</code> (for env) or stays in <code>ContainerCreating</code> (for a volume). <code>kubectl describe pod</code> names the missing object in its events.'],
+      ['h', 'Worked example: change a setting end to end'],
+      ['list', [
+        '<b>1. Create it:</b> <code>kubectl create configmap app-config --from-literal=LOG_LEVEL=info</code>.',
+        '<b>2. Use it:</b> the Deployment has <code>envFrom: [{ configMapRef: { name: app-config } }]</code>.',
+        '<b>3. Check it:</b> <code>kubectl exec deploy/web -- printenv LOG_LEVEL</code> prints <code>info</code>.',
+        '<b>4. Change it:</b> edit the YAML to <code>LOG_LEVEL: "debug"</code> and <code>kubectl apply -f configmap.yaml</code>.',
+        '<b>5. Check again:</b> still <code>info</code>. Environment variables were copied when the container started.',
+        '<b>6. Restart:</b> <code>kubectl rollout restart deployment/web</code>. The new pods print <code>debug</code>, and there was no downtime.',
+      ]],
+      ['h', 'Which one should I use?'],
+      ['table', {
+        head: ['Where the setting lives', 'Good for', 'Not for'],
+        rows: [
+          [
+            'Baked into the image',
+            'Defaults that never change per environment',
+            'Anything that differs between dev and prod',
+          ],
+          [
+            '<code>env:</code> value in the Deployment',
+            'One or two simple values owned by the app team',
+            'Long files, values shared by many apps',
+          ],
+          [
+            '<b>ConfigMap</b>',
+            'Non-secret settings and whole config files, shared and versioned separately',
+            'Passwords, tokens, keys',
+          ],
+          ['<b>Secret</b>', 'Passwords, tokens, certificates', 'Big files (also limited to 1 MiB)'],
+        ],
+      }],
+      ['tip', 'Want pods to restart automatically when a ConfigMap changes? Tools such as <b>Reloader</b> watch ConfigMaps and Secrets and trigger a rolling restart of the Deployments that use them.'],
+      ['h', 'Common mistakes'],
+      ['list', [
+        '<b>Putting passwords in a ConfigMap.</b> Anyone who can read ConfigMaps sees them. Use a Secret.',
+        '<b>Unquoted <code>true</code> or <code>8080</code> in <code>data</code>.</b> YAML turns them into a boolean or a number and the API rejects the object. Quote every value.',
+        '<b>Expecting env vars to update.</b> They never do. Restart the pods (or mount the ConfigMap as files and have the app reload).',
+        '<b>Mounting over a directory the image needs.</b> <code>mountPath: /etc/nginx</code> hides the image’s own <code>nginx.conf</code>. Mount into a subfolder like <code>/etc/nginx/conf.d</code>, or use <code>subPath</code> (which then never updates).',
+        '<b>Keys that aren’t valid variable names.</b> <code>envFrom</code> silently skips keys like <code>app.properties</code>. Mount those as files.',
+      ]],
     ],
     quiz: [
       { q: 'You changed LOG_LEVEL in a ConfigMap that a Deployment uses via <code>envFrom</code>. When do running pods see it?', options: ['Within a minute', 'Immediately', 'Only after the pods restart', 'Never, even after restart'], answer: 2, why: 'Environment variables are fixed at container start. Restart, e.g. kubectl rollout restart.' },
@@ -616,6 +1050,7 @@ export const INTERMEDIATE_A = [
     level: 'intermediate',
     title: 'Secrets',
     summary: 'Give pods passwords, tokens and certificates — and understand what Kubernetes protects, what it doesn’t, and how real teams lock it down.',
+    plain: 'A <b>Secret</b> holds sensitive data — passwords, API keys, certificates — that your pods need. It works much like a ConfigMap, but Kubernetes handles it more carefully: it limits who can read it and keeps it in memory on the nodes. Be careful, though: by default a Secret is only scrambled with base64, not truly encrypted. Real protection comes from who you let read it (RBAC) and from turning on encryption at rest.',
     minutes: 14,
     learn: [
       'Secret types and how to create them',
@@ -625,6 +1060,17 @@ export const INTERMEDIATE_A = [
     ],
     blocks: [
       ['p', 'A <b>Secret</b> looks almost exactly like a ConfigMap: key/value data that pods consume as env vars or files. The differences are in how Kubernetes treats it: Secrets are kept apart in RBAC, mounted on <b>tmpfs</b> (memory, never written to the node’s disk), only sent to nodes that run a pod that needs them, and can be encrypted at rest in etcd.'],
+      ['analogy', 'A ConfigMap is a notice pinned on the office board; a Secret is an envelope in the office safe. The envelope (base64) stops people reading it by accident, but anyone who can open the safe can open the envelope. The real protection is the safe’s lock — who has the key (<b>RBAC</b>) — and whether the safe itself is armoured (<b>encryption at rest</b>).'],
+      ['h3', 'Words to know'],
+      ['list', [
+        '<b>Encoding vs encryption</b> — encoding (base64) just changes the format and anyone can reverse it; encryption needs a key to reverse.',
+        '<b>etcd</b> — the database where the API server stores every object, Secrets included.',
+        '<b>tmpfs</b> — a folder that lives in memory, so its contents are never written to the node’s disk.',
+        '<b>RBAC</b> — role-based access control: the rules for who may read or change which objects.',
+        '<b>Encryption at rest</b> — the API server encrypts Secrets before saving them in etcd.',
+        '<b>KMS</b> — a key management service (in your cloud or Vault) that holds the encryption keys.',
+        '<b>Rotation</b> — replacing a secret value with a new one on a regular schedule.',
+      ]],
       ['warn', '<b>Base64 is not encryption.</b> The values in a Secret’s YAML are base64-<i>encoded</i> so that binary data survives. Anyone can decode them: <code>echo cGFzc3dvcmQ= | base64 -d</code> prints <code>password</code>. Committing a Secret manifest to Git is publishing the password.'],
       ['h', 'Secret types'],
       ['table', {
@@ -732,6 +1178,43 @@ export const INTERMEDIATE_A = [
         ],
       }],
       ['tip', 'Prefer short-lived, automatically rotated credentials over static Secrets wherever you can: workload identity (IRSA on EKS, Workload Identity on GKE/AKS) lets pods call cloud APIs with their ServiceAccount, with no secret stored at all.'],
+      ['h', 'The life of a Secret'],
+      ['list', [
+        '<b>1.</b> You run <code>kubectl apply</code>. The API server checks with RBAC that you may create Secrets in this namespace.',
+        '<b>2.</b> If encryption at rest is on, the API server encrypts the value (using a key from KMS) before writing it to <b>etcd</b>.',
+        '<b>3.</b> A pod that uses the Secret is scheduled to a node. That node’s kubelet is allowed to read only the Secrets its own pods need.',
+        '<b>4.</b> The kubelet writes the values into a <b>tmpfs</b> folder in memory and mounts it into the container (or sets env vars).',
+        '<b>5.</b> Your app reads <code>/var/run/secrets/db/password</code>.',
+        '<b>6.</b> When the pod is deleted, the tmpfs folder disappears with it. Nothing was ever written to the node’s disk.',
+      ]],
+      ['h', 'Rotating a secret'],
+      ['p', 'Passwords should change regularly, and immediately after a leak. Mounted Secret files update by themselves within about a minute, but your app must re-read the file. Environment variables never change until the pod restarts.'],
+      ['p', 'The safest pattern is versioned names. Create <code>db-secret-v2</code> with the new value, point the Deployment at it, and let the rolling update move pods over. Rolling back is just pointing at <code>db-secret-v1</code> again. With the External Secrets Operator, rotation happens in your vault, and the operator refreshes the Secret on its <code>refreshInterval</code>.'],
+      ['cmd', {
+        title: 'Encode a value for a manifest (the right way)',
+        parts: [
+          ['echo', 'Print text…'],
+          [
+            '-n',
+            '…<b>without</b> a trailing newline. Forget <code>-n</code> and the password silently gets a <code>\\n</code> on the end — a classic “wrong password” bug.',
+          ],
+          ['S3cr3t!', 'The value to encode.'],
+          ['|', 'Pipe it…'],
+          [
+            'base64',
+            '…into base64. Paste the output into <code>data:</code>, or simply use <code>stringData:</code> and let the API server encode it for you.',
+          ],
+        ],
+      }],
+      ['h', 'Common mistakes'],
+      ['list', [
+        '<b>Committing Secret manifests to Git.</b> base64 is readable by anyone. Use External Secrets, Sealed Secrets or SOPS.',
+        '<b><code>echo</code> without <code>-n</code></b> when encoding: the value ends with a newline and authentication fails.',
+        '<b>Logging environment variables.</b> Debug endpoints, crash reports and <code>env</code> dumps leak secrets passed as env vars. Prefer mounted files.',
+        '<b>Granting <code>list</code> on secrets “just to see names”.</b> <code>list</code> returns every value too.',
+        '<b>Forgetting who can create pods.</b> Anyone who can create a pod in a namespace can mount any Secret in it — treat that permission as secret access.',
+        '<b>Referencing a Secret in another namespace.</b> Pods can only use Secrets from their own namespace; copy it or sync it with a tool.',
+      ]],
     ],
     quiz: [
       { q: 'A Secret’s value is <code>cGFzc3dvcmQ=</code>. Is that encrypted?', options: ['Yes, AES', 'No, it is only base64-encoded', 'Yes, with the cluster CA', 'Only on managed clusters'], answer: 1, why: 'base64 is reversible encoding. Encryption at rest is a separate API server feature.' },

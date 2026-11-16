@@ -1406,3 +1406,164 @@ A.operatorReconcile = (root) => {
   resetButton(s, reset);
   reset();
 };
+
+// =====================================================================
+// Monitoring & logging: logs shipped off the node, Prometheus scrapes, an alert fires
+// =====================================================================
+A.obsSignals = (root) => {
+  const s = sceneWithHints(root, { title: 'Logs, metrics and an alert', hint: 'Send some traffic, scrape metrics, then start a memory leak and watch the alert fire.' });
+  const LIMIT_MI = 256;
+  const THRESHOLD = 80; // percent of the memory limit
+  const term = mkTerm({ height: '150px' });
+  const node = nodeBox('node-1', { capacity: 'kubelet writes /var/log/pods/…' });
+  const agent = h('span', { class: 'chip warn adv-obs-agent' }, '🛰 fluent-bit (DaemonSet)');
+  const nodeFiles = h('div', { class: 'adv-loglist' });
+  const loki = h('div', { class: 'adv-loglist' });
+  const bars = h('div', { class: 'adv-obs-bars' });
+  const alerts = h('div', { class: 'adv-obs-alerts' });
+  const prom = h('div', { class: 'node adv-obs-box' }, h('div', { class: 'node-title' }, '📈 Prometheus', h('small', {}, 'scrapes /metrics')), bars);
+  const lokiBox = h('div', { class: 'node adv-obs-box' }, h('div', { class: 'node-title' }, '🗄 Loki', h('small', {}, 'log store')), loki);
+  const amBox = h('div', { class: 'node adv-obs-box' }, h('div', { class: 'node-title' }, '🔔 Alertmanager', h('small', {}, `memory > ${THRESHOLD}% for 2 scrapes`)), alerts);
+  node.el.append(h('div', { class: 'adv-row' }, agent), h('div', { class: 'zone-title' }, 'log files on this node'), nodeFiles);
+  s.stage.append(h('div', { class: 'adv-obs-scene' }, h('div', { class: 'adv-col' }, node.el), h('div', { class: 'adv-col' }, lokiBox, prom), h('div', { class: 'adv-col' }, amBox)), term);
+
+  let st = { pods: [], loki: [], scrapes: 0, leaking: false, firing: null, request: 0 };
+  const makePod = (app, mem) => {
+    const name = podName(app);
+    const el = podEl(name, { status: 'ready', image: app === 'web' ? 'nginx:1.27' : 'kubelab/api:2.1', labels: { app } });
+    const bar = mkBar();
+    const val = h('b');
+    const row = h('div', { class: 'adv-membar' }, h('small', {}, name), bar, val);
+    return { app, name, el, bar, val, row, mem, cpu: 3, logs: [`${app}: started`], over: 0, restarts: 0 };
+  };
+  const podOf = (app) => st.pods.find((p) => p.app === app);
+  const drawBars = () => st.pods.forEach((p) => {
+    setBar(p.bar, p.mem);
+    p.val.textContent = `${Math.round((p.mem / 100) * LIMIT_MI)}Mi`;
+    p.row.classList.toggle('adv-hot', p.mem > THRESHOLD);
+  });
+  const drawFiles = () => nodeFiles.replaceChildren(...st.pods.map((p) => h('div', {}, `📄 ${p.name}/0.log — ${p.logs.length} line${p.logs.length === 1 ? '' : 's'}`)));
+  const drawLoki = () => loki.replaceChildren(...(st.loki.length ? st.loki.slice(-6).map((l) => h('div', {}, l)) : [h('div', { class: 'pg-empty' }, 'nothing shipped yet')]));
+  const drawAlerts = () => alerts.replaceChildren(st.firing ? h('div', { class: 'chip bad adv-obs-firing' }, `🔥 FIRING PodMemoryHigh — ${st.firing}`) : h('div', { class: 'pg-empty' }, 'no alerts firing'));
+
+  const reset = () => {
+    st = { pods: [makePod('web', 20), makePod('api', 30)], loki: [], scrapes: 0, leaking: false, firing: null, request: 0 };
+    node.pods.replaceChildren(...st.pods.map((p) => p.el));
+    bars.replaceChildren(...st.pods.map((p) => p.row));
+    term.replaceChildren();
+    out(term, '<span class="dim"># your terminal</span>');
+    drawBars(); drawFiles(); drawLoki(); drawAlerts();
+  };
+
+  const ship = async (p, line) => {
+    p.logs.push(line);
+    drawFiles();
+    await fly(s.stage, p.el, agent, { label: 'log', ms: 450 });
+    await fly(s.stage, agent, lokiBox, { label: `{app="${p.app}"}`, cls: 'white', ms: 550 });
+    st.loki.push(`${p.name}: ${line.replace(/^\S+ /, '')}`);
+    drawLoki();
+  };
+
+  s.btn('▶ Send traffic', async () => {
+    s.say('Each request makes the app print a line to <b>stdout</b>. The kubelet saves it in a file on the node; the DaemonSet agent tails that file and ships it to Loki with the pod\'s labels.');
+    for (const p of st.pods) {
+      st.request += 1;
+      p.cpu = Math.min(95, p.cpu + 6);
+      await ship(p, `${p.app} GET /${p.app === 'api' ? 'orders' : ''} 200 ${12 + st.request}ms`);
+    }
+  }, { primary: true });
+
+  const oomKill = async (p) => {
+    p.el.setStatus('crash');
+    say(term, `${p.name}  OOMKilled — exit code 137 (memory limit ${LIMIT_MI}Mi)`, 'bad');
+    p.logs.push(`${p.app}: killed (OOM)`);
+    await wait(900);
+    p.restarts += 1;
+    p.mem = 30;
+    p.over = 0;
+    p.dying = false;
+    p.el.setStatus('creating');
+    await wait(500);
+    p.el.setStatus('ready');
+    drawBars(); drawFiles();
+  };
+
+  s.btn('📈 Scrape /metrics', async () => {
+    st.scrapes += 1;
+    s.say(`Scrape #${st.scrapes}: Prometheus pulls <code>/metrics</code> from every target and stores each number with a timestamp.`);
+    await Promise.all(st.pods.map((p) => fly(s.stage, prom, p.el, { label: 'GET /metrics', ms: 500 })));
+    const killNow = st.pods.filter((p) => p.dying);
+    st.pods.forEach((p) => {
+      if (p.app === 'api' && st.leaking && !p.dying) p.mem = Math.min(100, p.mem + 22);
+      if (p.mem >= 100) p.dying = true;
+      p.cpu = Math.max(2, p.cpu - 3);
+    });
+    await Promise.all(st.pods.map((p) => fly(s.stage, p.el, prom, { label: `${Math.round((p.mem / 100) * LIMIT_MI)}Mi`, cls: 'white', ms: 500 })));
+    drawBars();
+    for (const p of st.pods) {
+      p.over = p.mem > THRESHOLD ? p.over + 1 : 0;
+      if (p.over >= 2 && !st.firing) {
+        st.firing = p.name;
+        drawAlerts();
+        await fly(s.stage, prom, amBox, { label: 'alert', ms: 600 });
+        flash(amBox);
+        say(term, `🔔 PodMemoryHigh firing: ${p.name} uses ${Math.round(p.mem)}% of its memory limit for 2 scrapes — paging on-call`, 'y');
+        s.say(`The alert rule was true for two scrapes in a row (<code>for: 1m</code>), so Alertmanager pages a human <b>before</b> the pod is killed.`);
+      }
+      if (killNow.includes(p)) {
+        s.say(`${p.app} tried to use more than its limit: the kernel <b>OOM-kills</b> it (exit 137) and the kubelet restarts it. The memory graph drops — and the alert that fired one scrape earlier explains why.`);
+        await oomKill(p);
+        if (st.firing === p.name) { st.firing = null; drawAlerts(); }
+      } else if (p.dying && !st.firing) s.say(`${p.app} is at 100% of its memory limit. The next allocation will be OOM-killed.`);
+    }
+  });
+
+  s.btn('💧 Start a memory leak in api', async () => {
+    st.leaking = !st.leaking;
+    s.say(st.leaking ? 'api now grows by about 56Mi between scrapes. Keep scraping: watch the bar cross 80%, the alert fire, then the OOM kill.' : 'Leak fixed. Memory stays flat from now on.');
+  });
+
+  const top = () => {
+    typed(term, 'kubectl top pods');
+    table(term, [['NAME', 'CPU(cores)', 'MEMORY(bytes)'], ...st.pods.map((p) => [p.name, `${p.cpu}m`, `${Math.round((p.mem / 100) * LIMIT_MI)}Mi`])]);
+    s.say('<code>kubectl top</code> reads <b>metrics-server</b>: just the latest value, no history. For "what happened last night?" you need Prometheus.');
+  };
+  s.btn('kubectl top pods', async () => top(), { cmd: /^kubectl top (?:pods?|po)(?: .*)?$/ });
+
+  const logs = (app, n = 5) => {
+    const p = podOf(app);
+    typed(term, `kubectl logs deploy/${app} --tail=${n}`);
+    p.logs.slice(-n).forEach((l) => say(term, l));
+    s.say(`<code>kubectl logs</code> reads the file on the node — only this pod's lines, only while the pod exists.`);
+  };
+  s.btn('kubectl logs deploy/web --tail=5', async (_, m) => logs(m?.[1] || 'web', Number(m?.[2] || 5)), { cmd: /^kubectl logs (?:(?:deploy(?:ment)?\/)?(web|api)\S*)(?: --tail[= ](\d+))?(?: .*)?$/ });
+
+  s.btn('kubectl delete pod api-…', async (_, m) => {
+    const old = podOf('api');
+    typed(term, `kubectl delete pod ${old.name}`);
+    say(term, `pod "${old.name}" deleted`);
+    old.el.setStatus('terminating');
+    await wait(500);
+    old.el.remove();
+    old.row.remove();
+    const fresh = makePod('api', 30);
+    st.pods = st.pods.map((p) => (p === old ? fresh : p));
+    node.pods.append(fresh.el);
+    bars.append(fresh.row);
+    if (st.firing === old.name) { st.firing = null; drawAlerts(); }
+    drawBars(); drawFiles();
+    s.say(`The old pod's log file is gone from the node — <code>kubectl logs</code> now shows only the new pod. Its lines are still in <b>Loki</b> because the agent shipped them first.`);
+  }, { cmd: /^kubectl delete (?:po|pods?) (api-\S+)$/, example: () => `kubectl delete pod ${podOf('api')?.name || 'api-…'}` });
+
+  s.command(/^kubectl get events(?: .*)?$/, async () => {
+    typed(term, 'kubectl get events --sort-by=.lastTimestamp');
+    const api = podOf('api');
+    table(term, [['LAST SEEN', 'TYPE', 'REASON', 'OBJECT', 'MESSAGE'],
+      ['40s', 'Normal', 'Started', `pod/${api.name}`, 'Started container api'],
+      ...(api.restarts ? [['10s', 'Warning', 'BackOff', `pod/${api.name}`, 'Back-off restarting failed container']] : [])]);
+    s.say('Events are Kubernetes talking about itself — kept for about an hour.');
+  }, { example: 'kubectl get events --sort-by=.lastTimestamp' });
+
+  resetButton(s, reset);
+  reset();
+};
